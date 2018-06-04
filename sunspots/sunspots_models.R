@@ -46,7 +46,7 @@ scale_history  <- rec_obj$steps[[3]]$sds["value"]
 model_exists <- FALSE
 stateful <- FALSE
 batch_size   <- 1
-n_timesteps <- 12
+n_timesteps <- 120
 n_predictions <- n_timesteps
 n_features <- 1
 n_epochs  <- 300
@@ -162,52 +162,93 @@ model
 if (stateful)
   model %>% reset_states()
 
-# Make Predictions
-pred_out <- model %>%
-  predict(X_test, batch_size = batch_size) %>%
-  .[, , 1]
+
+# Train predictions -------------------------------------------------------
+
+pred_train <- model %>%
+  predict(X_train, batch_size = batch_size) %>%
+    .[, , 1]
 
 # Retransform values
-pred_out <- (pred_out * scale_history + center_history) ^ 2
-pred_out[1:10, 1:5] %>% print()
+pred_train <- (pred_train * scale_history + center_history) ^ 2
+pred_train[1:10, 1:5] %>% print()
+compare_train <- df %>% filter(key == "training")
 
-compare_df <- df %>% filter(key == "testing")
-
-for (i in 1:nrow(pred_out)) {
-  varname <- paste0("pred_test", i)
-  compare_df <-
-    mutate(compare_df,!!varname := c(
+for (i in 1:nrow(pred_train)) {
+  varname <- paste0("pred_train", i)
+  compare_train <-
+    mutate(compare_train,!!varname := c(
       rep(NA, n_timesteps + i - 1),
-      pred_out[i,],
-      rep(NA, nrow(compare_df) - n_timesteps * 2 - i + 1)
+      pred_train[i,],
+      rep(NA, nrow(compare_train) - n_timesteps * 2 - i + 1)
     ))
 }
 
-compare_df %>% write_csv(str_replace(model_path, "hdf5", "csv") )
+compare_train %>% write_csv(str_replace(model_path, ".hdf5", ".train.csv") )
+compare_train[n_timesteps:(n_timesteps + 10), c(2, 4:8)] %>% print()
 
-compare_df[n_timesteps:(n_timesteps + 10), c(2, 4:8)] %>% print()
-
-# multiple_rmse <-
-#   calc_multiple_rmse(compare_df %>% select(-c(index, key)))
-
-coln <- colnames(compare_df)[4:ncol(compare_df)]
+coln <- colnames(compare_train)[4:ncol(compare_train)]
 cols <- map(coln, quo(sym(.)))
-multiple_rmse <-
+rsme_train <-
   map_dbl(cols, function(col)
     rmse(
-      compare_df,
+      compare_train,
       truth = value,
       estimate = !!col,
       na.rm = TRUE
     )) %>% mean()
 
-print(multiple_rmse)
+print(rsme_train)
 
-ggplot(compare_df, aes(x = index, y = value)) + geom_line() +
+ggplot(compare_train, aes(x = index, y = value)) + geom_line() +
+  geom_line(aes(y = pred_train1), color = "cyan") + 
+  geom_line(aes(y = pred_train100), color = "red") + 
+  geom_line(aes(y = pred_train300), color = "green") + 
+  geom_line(aes(y = pred_train500), color = "violet") +
+  geom_line(aes(y = pred_train700), color = "cyan") + 
+  geom_line(aes(y = pred_train900), color = "red") 
+
+
+# Test predictions--------------------------------------------------------------------
+
+pred_test <- model %>%
+  predict(X_test, batch_size = batch_size) %>%
+  .[, , 1]
+
+# Retransform values
+pred_test <- (pred_test * scale_history + center_history) ^ 2
+pred_test[1:10, 1:5] %>% print()
+compare_test <- df %>% filter(key == "testing")
+
+for (i in 1:nrow(pred_test)) {
+  varname <- paste0("pred_test", i)
+  compare_test <-
+    mutate(compare_test,!!varname := c(
+      rep(NA, n_timesteps + i - 1),
+      pred_test[i,],
+      rep(NA, nrow(compare_test) - n_timesteps * 2 - i + 1)
+    ))
+}
+
+compare_test %>% write_csv(str_replace(model_path, ".hdf5", ".test.csv") )
+compare_test[n_timesteps:(n_timesteps + 10), c(2, 4:8)] %>% print()
+
+coln <- colnames(compare_test)[4:ncol(compare_test)]
+cols <- map(coln, quo(sym(.)))
+rsme_test <-
+  map_dbl(cols, function(col)
+    rmse(
+      compare_test,
+      truth = value,
+      estimate = !!col,
+      na.rm = TRUE
+    )) %>% mean()
+
+print(rsme_test)
+
+ggplot(compare_test, aes(x = index, y = value)) + geom_line() +
   geom_line(aes(y = pred_test1), color = "cyan") + 
   geom_line(aes(y = pred_test100), color = "red") + 
   geom_line(aes(y = pred_test200), color = "green") + 
-  geom_line(aes(y = pred_test300), color = "violet") +
-  geom_line(aes(y = pred_test400), color = "red") + 
-  geom_line(aes(y = pred_test500), color = "green") 
+  geom_line(aes(y = pred_test300), color = "violet")
 
