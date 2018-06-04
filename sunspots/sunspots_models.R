@@ -209,6 +209,5 @@ ggplot(compare_df, aes(x = index, y = value)) + geom_line() +
   geom_line(aes(y = pred_test200), color = "green") + 
   geom_line(aes(y = pred_test300), color = "violet") +
   geom_line(aes(y = pred_test400), color = "red") + 
-  geom_line(aes(y = pred_test500), color = "green") %>%  
-  print()
+  geom_line(aes(y = pred_test500), color = "green") 
 
