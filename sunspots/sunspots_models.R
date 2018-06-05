@@ -1,4 +1,6 @@
 
+
+
 source("sunspots_functions.R")
 
 
@@ -45,14 +47,16 @@ scale_history  <- rec_obj$steps[[3]]$sds["value"]
 
 model_exists <- FALSE
 stateful <- FALSE
+stack_layers <- TRUE
 batch_size   <- 1
 n_timesteps <- 120
 n_predictions <- n_timesteps
 n_features <- 1
 n_epochs  <- 300
 n_units <- 64
-dropout <- 0.2
-recurrent_dropout <- 0.2
+dropout <- 0.4
+recurrent_dropout <- 0.4
+loss <- "logcosh"
 
 model_path <- file.path(
   "models",
@@ -71,6 +75,10 @@ model_path <- file.path(
     dropout,
     "_recdrop_",
     recurrent_dropout,
+    "_stack_",
+    stack,
+    "_loss",
+    loss,
     ".hdf5"
   )
 )
@@ -111,6 +119,15 @@ y_train <- reshape_X_3d(y_train)
 y_test <- reshape_X_3d(y_test)
 y_valid <- reshape_X_3d(y_valid)
 
+X_train <- X_train[1:nrow(X_train) - 1, , , drop = FALSE]
+X_valid <- X_valid[1:nrow(X_valid) - 1, , , drop = FALSE]
+X_test <- X_test[1:nrow(X_test) - 1, ,  , drop = FALSE]
+
+y_train <- y_train[1:nrow(y_train) - 1, ,  , drop = FALSE]
+y_valid <- y_valid[1:nrow(y_valid) - 1, ,  , drop = FALSE]
+y_test <- y_test[1:nrow(y_test) - 1, ,  , drop = FALSE]
+
+
 if (!model_exists) {
   model <- keras_model_sequential()
   
@@ -118,12 +135,23 @@ if (!model_exists) {
     layer_lstm(
       units            = n_units,
       batch_input_shape  = c(batch_size, n_timesteps, n_features),
+      dropout = dropout,
+      recurrent_dropout = recurrent_dropout,
       return_sequences = TRUE
-    ) %>%
-    time_distributed(layer_dense(units = 1))
+    )
+  if (stack_layers) {
+    model %>%
+      layer_lstm(
+        units            = n_units,
+        dropout = dropout,
+        recurrent_dropout = recurrent_dropout,
+        return_sequences = TRUE
+      )
+  }
+  model %>% time_distributed(layer_dense(units = 1))
   
   model %>%
-    compile(loss = 'mean_squared_error', optimizer = 'adam')
+    compile(loss = loss, optimizer = 'adam', metrics = list("mean_squared_error"))
   
   if (!stateful) {
     model %>% fit(
@@ -132,7 +160,10 @@ if (!model_exists) {
       validation_data = list(X_valid, y_valid),
       batch_size = batch_size,
       epochs     = n_epochs,
-      callbacks = list(callback_early_stopping(patience = 10))
+      callbacks = list(
+        callback_early_stopping(patience = 10),
+        callback_reduce_lr_on_plateau()
+      )
     )
     
   } else {
@@ -141,7 +172,10 @@ if (!model_exists) {
         x          = X_train,
         y          = y_train,
         validation_data = list(X_valid, y_valid),
-        callbacks = list(callback_early_stopping(patience = 2)),
+        callbacks = list(
+          callback_early_stopping(patience = 10),
+          callback_reduce_lr_on_plateau()
+        ),
         batch_size = batch_size,
         epochs     = 1,
         shuffle    = FALSE
@@ -167,7 +201,7 @@ if (stateful)
 
 pred_train <- model %>%
   predict(X_train, batch_size = batch_size) %>%
-    .[, , 1]
+  .[, , 1]
 
 # Retransform values
 pred_train <- (pred_train * scale_history + center_history) ^ 2
@@ -184,7 +218,7 @@ for (i in 1:nrow(pred_train)) {
     ))
 }
 
-compare_train %>% write_csv(str_replace(model_path, ".hdf5", ".train.csv") )
+compare_train %>% write_csv(str_replace(model_path, ".hdf5", ".train.csv"))
 compare_train[n_timesteps:(n_timesteps + 10), c(2, 4:8)] %>% print()
 
 coln <- colnames(compare_train)[4:ncol(compare_train)]
@@ -201,12 +235,12 @@ rsme_train <-
 print(rsme_train)
 
 ggplot(compare_train, aes(x = index, y = value)) + geom_line() +
-  geom_line(aes(y = pred_train1), color = "cyan") + 
-  geom_line(aes(y = pred_train100), color = "red") + 
-  geom_line(aes(y = pred_train300), color = "green") + 
+  geom_line(aes(y = pred_train1), color = "cyan") +
+  geom_line(aes(y = pred_train100), color = "red") +
+  geom_line(aes(y = pred_train300), color = "green") +
   geom_line(aes(y = pred_train500), color = "violet") +
-  geom_line(aes(y = pred_train700), color = "cyan") + 
-  geom_line(aes(y = pred_train900), color = "red") 
+  geom_line(aes(y = pred_train700), color = "cyan") +
+  geom_line(aes(y = pred_train900), color = "red")
 
 
 # Test predictions--------------------------------------------------------------------
@@ -230,7 +264,7 @@ for (i in 1:nrow(pred_test)) {
     ))
 }
 
-compare_test %>% write_csv(str_replace(model_path, ".hdf5", ".test.csv") )
+compare_test %>% write_csv(str_replace(model_path, ".hdf5", ".test.csv"))
 compare_test[n_timesteps:(n_timesteps + 10), c(2, 4:8)] %>% print()
 
 coln <- colnames(compare_test)[4:ncol(compare_test)]
@@ -247,8 +281,7 @@ rsme_test <-
 print(rsme_test)
 
 ggplot(compare_test, aes(x = index, y = value)) + geom_line() +
-  geom_line(aes(y = pred_test1), color = "cyan") + 
-  geom_line(aes(y = pred_test100), color = "red") + 
-  geom_line(aes(y = pred_test200), color = "green") + 
+  geom_line(aes(y = pred_test1), color = "cyan") +
+  geom_line(aes(y = pred_test100), color = "red") +
+  geom_line(aes(y = pred_test200), color = "green") +
   geom_line(aes(y = pred_test300), color = "violet")
-
