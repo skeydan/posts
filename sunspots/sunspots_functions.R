@@ -234,3 +234,4 @@ calc_multiple_rmse <- function(df) {
       )))
   mean(rowwise_rsme)
 }
+

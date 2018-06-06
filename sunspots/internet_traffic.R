@@ -1,37 +1,20 @@
 source("sunspots_functions.R")
 
-sun_spots <- datasets::sunspot.month %>%
-  tk_tbl() %>%
-  mutate(index = as_date(index)) %>%
-  as_tbl_time(index = index)
+traffic_df <- read_csv("internet-traffic-data-in-bits-fr.csv", col_names = c("hour", "bits"), skip = 1)
+ggplot(traffic_df, aes(x = hour, y = bits)) + geom_line() + ggtitle("Internet traffic")
 
-periods_train <- 12 * 100
-periods_test  <- 12 * 50
-skip_span     <- 12 * 20
+df_trn <- data.frame(value = traffic_df$bits[1:500])
+df_val <- data.frame(value = traffic_df$bits[501:860])
+df_tst <- data.frame(value = traffic_df$bits[861:1231])
 
-rolling_origin_resamples <- rolling_origin(
-  sun_spots,
-  initial    = periods_train,
-  assess     = periods_test,
-  cumulative = FALSE,
-  skip       = skip_span
-)
-
-split    <- rolling_origin_resamples$splits[[6]]
-split_id <- rolling_origin_resamples$id[[6]]
-df_val <- training(rolling_origin_resamples$splits[[5]])
-df_trn <- training(split)
-df_tst <- testing(split)
 
 df <- bind_rows(
   df_trn %>% add_column(key = "training"),
   df_tst %>% add_column(key = "testing"),
   df_val %>% add_column(key = "validation")
-) %>%
-  as_tbl_time(index = index)
+) 
 
 rec_obj <- recipe(value ~ ., df) %>%
-   step_sqrt(value) %>%
    step_center(value) %>%
    step_scale(value) %>%
    prep()
@@ -41,26 +24,23 @@ df_processed_tbl <- bake(rec_obj, df)
 center_history <- rec_obj$steps[[2]]$means["value"]
 scale_history  <- rec_obj$steps[[3]]$sds["value"]
 
-print(center_history)
-print(scale_history)
-
-model_exists <- TRUE
+model_exists <- FALSE
 stateful <- FALSE
 stack_layers <- TRUE
-batch_size   <- 10
-n_timesteps <- 120
+batch_size   <- 1
+n_timesteps <- 168
 n_predictions <- n_timesteps
 n_features <- 1
 n_epochs  <- 200
-n_units <- 128
-dropout <- 0.4
-recurrent_dropout <- 0.4
-loss <- "logcosh"
+n_units <- 64
+dropout <- 0.2
+recurrent_dropout <- 0.2
+loss <- "mean_squared_error"
 optimizer <- optimizer_adam(lr = 0.0003)
 
 callbacks <- list(
-  callback_early_stopping(patience = 20),
-  callback_reduce_lr_on_plateau(factor = 0.5, patience = 5, verbose = 1, min_lr = 0.00001),
+  callback_early_stopping(patience = 50),
+  callback_reduce_lr_on_plateau(),
   callback_tensorboard(log_dir = "/tmp/tf", 
                        histogram_freq = 5,
                        batch_size = batch_size,
@@ -70,6 +50,7 @@ callbacks <- list(
 model_path <- file.path(
   "models",
   paste0(
+    "internet_traffic_",
     "LSTM_stateful_",
     stateful,
     "_tsteps_",
@@ -128,15 +109,6 @@ y_train <- reshape_X_3d(y_train)
 y_test <- reshape_X_3d(y_test)
 y_valid <- reshape_X_3d(y_valid)
 
-X_train <- X_train[1:nrow(X_train) - 1, , , drop = FALSE]
-X_valid <- X_valid[1:nrow(X_valid) - 1, , , drop = FALSE]
-X_test <- X_test[1:nrow(X_test) - 1, ,  , drop = FALSE]
-
-y_train <- y_train[1:nrow(y_train) - 1, ,  , drop = FALSE]
-y_valid <- y_valid[1:nrow(y_valid) - 1, ,  , drop = FALSE]
-y_test <- y_test[1:nrow(y_test) - 1, ,  , drop = FALSE]
-
-
 if (!model_exists) {
   model <- keras_model_sequential()
   
@@ -149,7 +121,6 @@ if (!model_exists) {
       return_sequences = TRUE
     )
   if (stack_layers) {
-    
     model %>%
       layer_lstm(
         units            = n_units,
@@ -162,8 +133,6 @@ if (!model_exists) {
   
   model %>%
     compile(loss = loss, optimizer = optimizer, metrics = list("mean_squared_error"))
-  
-  print(model)
   
   if (!stateful) {
     model %>% fit(
@@ -240,13 +209,11 @@ rsme_train <-
 
 print(rsme_train)
 
-ggplot(compare_train, aes(x = index, y = value)) + geom_line() +
+ggplot(compare_train, aes(x = as.integer(x = rownames(compare_train)), y = value)) + geom_line() +
   geom_line(aes(y = pred_train1), color = "cyan") +
-  geom_line(aes(y = pred_train100), color = "red") +
-  geom_line(aes(y = pred_train300), color = "green") +
-  geom_line(aes(y = pred_train500), color = "violet") +
-  geom_line(aes(y = pred_train700), color = "cyan") +
-  geom_line(aes(y = pred_train900), color = "red")
+  geom_line(aes(y = pred_train60), color = "green") +
+  geom_line(aes(y = pred_train120), color = "violet") +
+  geom_line(aes(y = pred_train160), color = "red")
 
 
 # Test predictions--------------------------------------------------------------------
@@ -256,7 +223,7 @@ pred_test <- model %>%
   .[, , 1]
 
 # Retransform values
-pred_test <- (pred_test * scale_history + center_history) ^2
+pred_test <- (pred_test * scale_history + center_history) 
 pred_test[1:10, 1:5] %>% print()
 compare_test <- df %>% filter(key == "testing")
 
@@ -286,9 +253,6 @@ rsme_test <-
 
 print(rsme_test)
 
-ggplot(compare_test, aes(x = index, y = value)) + geom_line() +
-  geom_line(aes(y = pred_test1), color = "cyan") +
-  geom_line(aes(y = pred_test100), color = "red") +
-  geom_line(aes(y = pred_test200), color = "green") +
-  geom_line(aes(y = pred_test300), color = "violet")
-
+ggplot(compare_test, aes(x = as.integer(x = rownames(compare_test)), y = value)) + geom_line() +
+  geom_line(aes(y = pred_test12), color = "cyan") +
+  geom_line(aes(y = pred_test32), color = "violet")
