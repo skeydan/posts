@@ -2,3 +2,9 @@
 .Rhistory
 .RData
 .Ruserdata
+*.Rproj
+*.ini
+key_1.csv
+key_2.csv
+train_1.csv
+train_2.csv
