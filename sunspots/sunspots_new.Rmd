@@ -1,0 +1,256 @@
+---
+title: "Forecasting at its limits: an LSTM experiment"
+author: "Sigrid Keydana, Matt Dancho"
+date: "2018-10-06"
+categories:
+  - Keras
+slug: sunspots-lstm
+---
+
+
+```{r setup, echo=FALSE, include=FALSE}
+library(knitr)
+opts_chunk$set(comment = "", message = FALSE, warning = FALSE)
+```
+
+
+```{r, echo=FALSE}
+library(tidyverse)
+library(tibbletime)
+library(timetk)
+library(tidyquant)
+library(forecast)
+library(recipes)
+library(rsample)
+library(keras)
+```
+
+
+## It is difficult to make predictions, especially about the future
+
+While we're not going to delve into the history of this often-cited quote (see e.g. https://quoteinvestigator.com/2013/10/20/no-predict/), let us say why we're using it.
+This is a follow-up to [Matt's original post on business-science.io](http://www.business-science.io/timeseries-analysis/2018/04/18/keras-lstm-sunspots-time-series-prediction.html), predicting monthly frequencies of sunspots (areas on the sun's surface that are temporarily cooler and darker), over a period of 10 years.
+
+Striving to further improve on the solution, leveraging LSTM's (and similar RNN types') specific capabilities, it became clear, however, that the chosen task is all but easy. Let's take a look at the data:
+
+```{r, echo=FALSE, fig.width=10}
+sun_spots <- datasets::sunspot.month %>%
+    tk_tbl() %>%
+    mutate(index = as_date(index))
+
+sun_spots %>%
+    ggplot(aes(index, value)) +
+    #geom_point(color = palette_light()[[1]], alpha = 0.5, size = 1) +
+    geom_line() + 
+    theme_tq() +
+    labs(
+        title    = "Monthly sunspots from 1749 to 2013")
+```
+
+
+Even though the data is discrete, we're displaying lines, to make it easier on us humans to grab the patterns.
+At first glance, this data does not look too irregular: There are clearly visible cycles and also, it seems, a slight overall trend. So whenever we are in a cycle, we (resp. the forecasting algorithm we're using) should have a good idea of where we're going. Sure, there still is the problem of high variability, or noise. A smoothing filter, however, should be able to help us out here.
+
+The problem is, we have been tasked to predict 120 samples - 10 years. Assume we were at a bit after 1900, just having experienced two of the low-amplitude cycles. Our algorithm has learned that last time this happened, the following two cycles will gain momentum very quickly, and then we'll be headed south again. If it extrapolates from this, its predicted amplitudes will be way off.
+
+Perhaps with an overall much longer series, we could see a pattern of Gaussians increasing in mean and variance.
+But we don't have the data.
+
+With the enormous difficulty of this task, all we can strive for is the least inaccurate solution. By the way: [SILSO](http://sidc.be/silso/home), a.k.a. _World Data Center for the production, preservation and dissemination of the international sunspot number_, offers a monthly forecast on their website. But evidently, those are not comparable tasks.
+
+## Getting a baseline: ARIMA
+
+Even though we're interested in how LSTM handles the situation, let's first see how ARIMA handles the challenge.
+We're used to seeing ARIMA perform wonderfully on autoregressive-looking time series like this, but again, we are looking for 120-step-ahead predictions!
+
+For preprocessing, we are using the same steps as in the original post, but we are not reproducing it, to allow for easier reading. In short, we will create training and test sets using a rolling resampling scheme, but here we'll just pick one of the splits (the last one). As explained later, we need to create longer, thus fewer splits, to provide the LSTM enough training and test data. Then, we take the square root (getting rid of at least _some_ of the noise) and standardize, just like before.
+
+```{r, echo=FALSE}
+periods_train <- 12 * 100
+periods_test  <- 12 * 50
+skip_span     <- 12 * 20
+
+rolling_origin_resamples <- rolling_origin(
+  sun_spots,
+  initial    = periods_train,
+  assess     = periods_test,
+  cumulative = FALSE,
+  skip       = skip_span
+)
+
+split    <- rolling_origin_resamples$splits[[6]]
+split_id <- rolling_origin_resamples$id[[6]]
+df_trn <- training(split)
+df_tst <- testing(split)
+
+df <- bind_rows(df_trn %>% add_column(key = "training"),
+                df_tst %>% add_column(key = "testing")) %>%
+  as_tbl_time(index = index)
+
+rec_obj <- recipe(value ~ ., df) %>%
+  step_sqrt(value) %>%
+  step_center(value) %>%
+  step_scale(value) %>%
+  prep()
+
+df_processed_tbl <- bake(rec_obj, df)
+
+center_history <- rec_obj$steps[[2]]$means["value"]
+scale_history  <- rec_obj$steps[[3]]$sds["value"]
+
+train_vals <- df_processed_tbl %>%
+  filter(key == "training") %>%
+  select(value) %>%
+  pull()
+test_vals <- df_processed_tbl %>%
+  filter(key == "testing") %>%
+  select(value) %>%
+  pull()
+
+```
+
+How does ARIMA see this time series?
+
+```{r}
+fit <- auto.arima(train_vals)
+fit
+```
+
+
+Now what about the predictions? We want forecasts of length 120 at every timestep in the test set.
+Thus, we start with the model obtained on the training set, and add test set samples one by one.
+(This will work differently with LSTM, later, but it actually favors ARIMA, our baseline, so it's nothing to worry about.)
+As described in RJ Hyndman's wonderfully concise [https://robjhyndman.com/hyndsight/rolling-forecasts/](post on rolling forecasts), when a new data point comes in, we can either completely re-compute the model, or inform ARIMA about the order of the original fit an just re-estimate the coefficients. Let's chose the latter method:
+
+```{r}
+# multistep forecasts, as per https://robjhyndman.com/hyndsight/rolling-forecasts/
+# 2 variants:
+# - reestimate model as new data point comes in
+# - re-select complete model as new data point comes in
+# we keep the complete training set (as would be realistic in a real-world scenario)
+# however, this gives ARIMA an advantage that LSTM does not get
+forecast_rolling <-
+  function(fit, n_forecast, train, test, fmode = "reestimate_only") {
+    n <- length(test) - n_forecast + 1
+    order <- arimaorder(fit)
+    predictions <- matrix(0, nrow = n, ncol = n_forecast)
+    lower <- matrix(0, nrow = n, ncol = n_forecast)
+    upper <- matrix(0, nrow = n, ncol = n_forecast)
+    
+    for (i in 1:n) {
+      x <- c(train, test[0:(i - 1)])
+      if (fmode == "reestimate_only") {
+        # re-estimate parameters, given model
+        if (!is.na(order[7])) {
+          refit <-
+            Arima(x,
+                  order = order[1:3],
+                  seasonal = list(order = order[4:6], period = order[7]))
+        } else {
+          refit <- Arima(x, order = order[1:3],  seasonal = order[4:6])
+        }
+      } else if (fmode == "recompute_model") {
+        # re-select the whole model
+        refit <- auto.arima(x)
+      }
+      predictions[i,] <- forecast(refit, h = n_forecast)$mean
+      lower[i,] <-
+        unclass(forecast(refit, h = n_forecast)$lower)[, 2] # 95% prediction interval
+      upper[i,] <-
+        unclass(forecast(refit, h = n_forecast)$upper)[, 2] # 95% prediction interval
+    }
+    
+    list(predictions = predictions,
+         lower = lower,
+         upper = upper)
+  }
+
+```
+
+```{r}
+n_timesteps <- 120
+preds_list <- forecast_rolling(fit, n_timesteps, train_vals, test_vals)
+```
+
+Let's jump over the post-processing step and look at the predictions. For visibility, we display just a few, but we're getting a clear impression:
+
+```{r, echo=FALSE}
+pred_test <- drop(preds_list$predictions)
+pred_test <- (pred_test * scale_history + center_history) ^ 2
+compare_test <- df_tst
+
+for (i in 1:nrow(pred_test)) {
+  varname <- paste0("pred_test", i)
+  compare_test <-
+    mutate(compare_test,!!varname := c(rep(NA, i - 1),
+                                       pred_test[i,],
+                                       rep(
+                                         NA, nrow(compare_test) - n_timesteps - i + 1
+                                       )))
+}
+coln <- colnames(compare_test)[3:ncol(compare_test)]
+cols <- map(coln, quo(sym(.)))
+rsme_test_arima <-
+  map_dbl(cols, function(col)
+    rmse(
+      compare_test,
+      truth = value,
+      estimate = !!col,
+      na.rm = TRUE
+    )) %>% mean()
+```
+
+```{r}
+ggplot(compare_test, aes(x = index, y = value)) + geom_line() +
+  geom_line(aes(y = pred_test1), color = "cyan") +
+  geom_line(aes(y = pred_test70), color = "red") +
+  geom_line(aes(y = pred_test140), color = "green") +
+  geom_line(aes(y = pred_test210), color = "violet") +
+  geom_line(aes(y = pred_test280), color = "red") +
+  geom_line(aes(y = pred_test350), color = "green") +
+  geom_line(aes(y = pred_test420), color = "violet") +
+  geom_line(aes(y = pred_test481), color = "cyan")
+
+```
+
+
+Clearly, if we desperately need to forecast 120 steps ahead, we need to try something else.
+Can deep neural networks help us out here?
+
+Before we go on, let's memorize the RSME for our baseline (as RSME was the measure used in the original post):
+
+```{r}
+rsme_test_arima
+```
+
+
+## LSTM to the rescue?
+
+As of today, among Recurrent Neural Networks (RNNs), the best established architectures are GRU (Gated Recurrent Unit) and LSTM (Long Short Term Memory), the one we will use in this post. For the purpose of this post, however, let's not zoom in on what makes them special, but what they have in common with the most stripped-down RNN: the basic recurrency structure.
+
+In contrast to the prototype of a neural network, often called Multilayer Perceptron (MLP), the RNN has a state that is carried on over time. This is nicely seen in this diagram from the "bible of deep learning" (tbd link)
+
+(tbd pic)
+
+(...)
+
+It is this recurrency we are going to make use of. Concretely this means: We will feed the network sequences of input, and predict sequences of the desired output length (120 in our case). How long should we choose the internal recurrence to be? We know (from the original post) that about 120 timesteps fit in a complete cycle, and the network architecture will end up most straightforward if we choose state length to match the output length.
+
+First, we need to transform the data so we get a sliding window of of 120 steps of input, followed by 120 steps of output. That is, if our input were the numbers from 1 to 10, and our chosen sequence length was 4, this is how we would want our training input to look:
+
+```
+1,2,3,4
+2,3,4,5
+3,4,5,6
+```
+
+And our target data, correspondingly:
+
+```
+5,6,7,8
+6,7,8,9
+7,8,9,10
+```
+Here by the way, you can see that we need more training and test data than if we just used a single time step. So if we wanted to do resampling cross validation, we'd have to get along with fewer splits.
+
+

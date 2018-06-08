@@ -44,28 +44,33 @@ scale_history  <- rec_obj$steps[[3]]$sds["value"]
 print(center_history)
 print(scale_history)
 
-model_exists <- TRUE
+model_exists <- FALSE
 stateful <- FALSE
-stack_layers <- TRUE
+stack_layers <- FALSE
 batch_size   <- 10
 n_timesteps <- 120
 n_predictions <- n_timesteps
 n_features <- 1
-n_epochs  <- 200
+n_epochs  <- 100
 n_units <- 128
-dropout <- 0.4
-recurrent_dropout <- 0.4
+dropout <- 0
+recurrent_dropout <- 0
 loss <- "logcosh"
-optimizer <- optimizer_adam(lr = 0.0003)
-
+stop_early <- FALSE
+optimizer_type <- "sgd"
+lr <- 0.003
+momentum <- 0.9
+optimizer <- switch(optimizer_type,
+                    sgd = optimizer_sgd(lr = lr, momentum = momentum))
 callbacks <- list(
-  callback_early_stopping(patience = 20),
-  callback_reduce_lr_on_plateau(factor = 0.5, patience = 5, verbose = 1, min_lr = 0.00001),
-  callback_tensorboard(log_dir = "/tmp/tf", 
-                       histogram_freq = 5,
-                       batch_size = batch_size,
-                       write_grads = TRUE,
-                       write_images = TRUE))
+#  callback_learning_rate_scheduler(function(epoch, lr) lr + epoch * 0.001))
+#  callback_early_stopping(patience = 2),
+#  callback_tensorboard(log_dir = "/tmp/tf", 
+#                       histogram_freq = 5,
+#                       batch_size = batch_size,
+#                       write_grads = TRUE,
+#                       write_images = TRUE
+)
 
 model_path <- file.path(
   "models",
@@ -88,6 +93,14 @@ model_path <- file.path(
     stack_layers,
     "_loss_",
     loss,
+    "_stopearly_",
+    stop_early,
+    "_optimizer_",
+    optimizer_type,
+    "_lr_",
+    lr,
+    "_momentum_",
+    momentum,
     ".hdf5"
   )
 )
