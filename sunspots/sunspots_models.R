@@ -51,7 +51,7 @@ batch_size   <- 10
 n_timesteps <- 120
 n_predictions <- n_timesteps
 n_features <- 1
-n_epochs  <- 100
+n_epochs  <- 20 # just for the graph
 n_units <- 128
 dropout <- 0
 recurrent_dropout <- 0
@@ -63,8 +63,8 @@ momentum <- 0.9
 optimizer <- switch(optimizer_type,
                     sgd = optimizer_sgd(lr = lr, momentum = momentum))
 callbacks <- list(
-#  callback_learning_rate_scheduler(function(epoch, lr) lr + epoch * 0.001))
-#  callback_early_stopping(patience = 2),
+#   callback_learning_rate_scheduler(function(epoch, lr) lr + epoch * 0.001)
+  callback_early_stopping(patience = 2)
 #  callback_tensorboard(log_dir = "/tmp/tf", 
 #                       histogram_freq = 5,
 #                       batch_size = batch_size,

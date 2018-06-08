@@ -123,7 +123,7 @@ compare_test[1:10, c(2, 4:8)] %>% print()
 
 coln <- colnames(compare_test)[3:ncol(compare_test)]
 cols <- map(coln, quo(sym(.)))
-rsme_test <-
+rmse_test <-
   map_dbl(cols, function(col)
     rmse(
       compare_test,
@@ -132,7 +132,7 @@ rsme_test <-
       na.rm = TRUE
     )) %>% mean()
 
-print(rsme_test)
+print(rmse_test)
 
 ggplot(compare_test, aes(x = index, y = value)) + geom_line() +
   geom_line(aes(y = pred_test1), color = "cyan") +
