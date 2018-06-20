@@ -20,6 +20,7 @@ library(yardstick)
 
 # Modeling
 library(keras)
+library(tfruns)
 
 library(purrr)
 

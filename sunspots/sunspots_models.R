@@ -19,14 +19,12 @@ rolling_origin_resamples <- rolling_origin(
 
 split    <- rolling_origin_resamples$splits[[6]]
 split_id <- rolling_origin_resamples$id[[6]]
-df_val <- training(rolling_origin_resamples$splits[[5]])
 df_trn <- training(split)
 df_tst <- testing(split)
 
 df <- bind_rows(
   df_trn %>% add_column(key = "training"),
-  df_tst %>% add_column(key = "testing"),
-  df_val %>% add_column(key = "validation")
+  df_tst %>% add_column(key = "testing")
 ) %>%
   as_tbl_time(index = index)
 
@@ -45,26 +43,32 @@ print(center_history)
 print(scale_history)
 
 model_exists <- FALSE
-stateful <- FALSE
-stack_layers <- FALSE
-batch_size   <- 10
-n_timesteps <- 120
-n_predictions <- n_timesteps
+
+
+FLAGS <- flags(
+  flag_boolean("stateful", FALSE),
+  flag_boolean("stack_layers", FALSE),
+  flag_integer("batch_size", 10),
+  flag_integer("n_timesteps", 12),
+  flag_integer("n_epochs", 100),
+  flag_numeric("dropout", 0.2),
+  flag_numeric("recurrent_dropout", 0.2),
+  flag_string("loss", "logcosh"),
+  flag_string("optimizer_type", "sgd"),
+  flag_integer("n_units", 128),
+  flag_numeric("lr", 0.003),
+  flag_numeric("momentum", 0.9),
+  flag_integer("patience", 20)
+)
+
+n_predictions <- FLAGS$n_timesteps
 n_features <- 1
-n_epochs  <- 20 # just for the graph
-n_units <- 128
-dropout <- 0
-recurrent_dropout <- 0
-loss <- "logcosh"
-stop_early <- FALSE
-optimizer_type <- "sgd"
-lr <- 0.003
-momentum <- 0.9
-optimizer <- switch(optimizer_type,
-                    sgd = optimizer_sgd(lr = lr, momentum = momentum))
+
+optimizer <- switch(FLAGS$optimizer_type,
+                    sgd = optimizer_sgd(lr = FLAGS$lr, momentum = FLAGS$momentum))
 callbacks <- list(
-#   callback_learning_rate_scheduler(function(epoch, lr) lr + epoch * 0.001)
-  callback_early_stopping(patience = 2)
+   #callback_learning_rate_scheduler(function(epoch, lr) lr + epoch * 0.001)
+  callback_early_stopping(patience = FLAGS$patience)
 #  callback_tensorboard(log_dir = "/tmp/tf", 
 #                       histogram_freq = 5,
 #                       batch_size = batch_size,
@@ -76,31 +80,29 @@ model_path <- file.path(
   "models",
   paste0(
     "LSTM_stateful_",
-    stateful,
+    FLAGS$stateful,
     "_tsteps_",
-    n_timesteps,
+    FLAGS$n_timesteps,
     "_epochs_",
-    n_epochs,
+    FLAGS$n_epochs,
     "_units_",
-    n_units,
+    FLAGS$n_units,
     "_batchsize_",
-    batch_size,
+    FLAGS$batch_size,
     "_dropout_",
-    dropout,
+    FLAGS$dropout,
     "_recdrop_",
-    recurrent_dropout,
+    FLAGS$recurrent_dropout,
     "_stack_",
-    stack_layers,
+    FLAGS$stack_layers,
     "_loss_",
-    loss,
-    "_stopearly_",
-    stop_early,
+    FLAGS$loss,
     "_optimizer_",
-    optimizer_type,
+    FLAGS$optimizer_type,
     "_lr_",
-    lr,
+    FLAGS$lr,
     "_momentum_",
-    momentum,
+    FLAGS$momentum,
     ".hdf5"
   )
 )
@@ -113,41 +115,26 @@ test_vals <- df_processed_tbl %>%
   filter(key == "testing") %>%
   select(value) %>%
   pull()
-valid_vals <- df_processed_tbl %>%
-  filter(key == "validation") %>%
-  select(value) %>%
-  pull()
 
 train_matrix <-
-  build_matrix(train_vals, n_timesteps + n_predictions)
-test_matrix <- build_matrix(test_vals, n_timesteps + n_predictions)
-valid_matrix <-
-  build_matrix(valid_vals, n_timesteps + n_predictions)
+  build_matrix(train_vals, FLAGS$n_timesteps + n_predictions)
+test_matrix <- build_matrix(test_vals, FLAGS$n_timesteps + n_predictions)
 
-X_train <- train_matrix[, 1:n_timesteps]
-y_train <- train_matrix[, (n_timesteps + 1):(n_timesteps * 2)]
+X_train <- train_matrix[, 1:FLAGS$n_timesteps]
+y_train <- train_matrix[, (FLAGS$n_timesteps + 1):(FLAGS$n_timesteps * 2)]
+X_train <- X_train[1:(nrow(X_train) %/% FLAGS$batch_size * FLAGS$batch_size), ]
+y_train <- y_train[1:(nrow(y_train) %/% FLAGS$batch_size * FLAGS$batch_size), ]
 
-X_test <- test_matrix[, 1:n_timesteps]
-y_test <- test_matrix[, (n_timesteps + 1):(n_timesteps * 2)]
-
-X_valid <- valid_matrix[, 1:n_timesteps]
-y_valid <- valid_matrix[, (n_timesteps + 1):(n_timesteps * 2)]
+X_test <- test_matrix[, 1:FLAGS$n_timesteps]
+y_test <- test_matrix[, (FLAGS$n_timesteps + 1):(FLAGS$n_timesteps * 2)]
+X_test <- X_test[1:(nrow(X_test) %/% FLAGS$batch_size * FLAGS$batch_size), ]
+y_test <- y_test[1:(nrow(y_test) %/% FLAGS$batch_size * FLAGS$batch_size), ]
 
 X_train <- reshape_X_3d(X_train)
 X_test <- reshape_X_3d(X_test)
-X_valid <- reshape_X_3d(X_valid)
 
 y_train <- reshape_X_3d(y_train)
 y_test <- reshape_X_3d(y_test)
-y_valid <- reshape_X_3d(y_valid)
-
-X_train <- X_train[1:nrow(X_train) - 1, , , drop = FALSE]
-X_valid <- X_valid[1:nrow(X_valid) - 1, , , drop = FALSE]
-X_test <- X_test[1:nrow(X_test) - 1, ,  , drop = FALSE]
-
-y_train <- y_train[1:nrow(y_train) - 1, ,  , drop = FALSE]
-y_valid <- y_valid[1:nrow(y_valid) - 1, ,  , drop = FALSE]
-y_test <- y_test[1:nrow(y_test) - 1, ,  , drop = FALSE]
 
 
 if (!model_exists) {
@@ -155,47 +142,47 @@ if (!model_exists) {
   
   model %>%
     layer_lstm(
-      units            = n_units,
-      batch_input_shape  = c(batch_size, n_timesteps, n_features),
-      dropout = dropout,
-      recurrent_dropout = recurrent_dropout,
+      units            = FLAGS$n_units,
+      batch_input_shape  = c(FLAGS$batch_size, FLAGS$n_timesteps, n_features),
+      dropout = FLAGS$dropout,
+      recurrent_dropout = FLAGS$recurrent_dropout,
       return_sequences = TRUE
     )
-  if (stack_layers) {
+  if (FLAGS$stack_layers) {
     
     model %>%
       layer_lstm(
-        units            = n_units,
-        dropout = dropout,
-        recurrent_dropout = recurrent_dropout,
+        units            = FLAGS$n_units,
+        dropout = FLAGS$dropout,
+        recurrent_dropout = FLAGS$recurrent_dropout,
         return_sequences = TRUE
       )
   }
   model %>% time_distributed(layer_dense(units = 1))
   
   model %>%
-    compile(loss = loss, optimizer = optimizer, metrics = list("mean_squared_error"))
+    compile(loss = FLAGS$loss, optimizer = optimizer, metrics = list("mean_squared_error"))
   
   print(model)
   
-  if (!stateful) {
-    model %>% fit(
+  if (!FLAGS$stateful) {
+    history <- model %>% fit(
       x          = X_train,
       y          = y_train,
-      validation_data = list(X_valid, y_valid),
-      batch_size = batch_size,
-      epochs     = n_epochs,
+      validation_data = list(X_test, y_test),
+      batch_size = FLAGS$batch_size,
+      epochs     = FLAGS$n_epochs,
       callbacks = callbacks
     )
     
   } else {
     for (i in 1:n_epochs) {
-      model %>% fit(
+      history <- model %>% fit(
         x          = X_train,
         y          = y_train,
-        validation_data = list(X_valid, y_valid),
+        validation_data = list(X_test, y_test),
         callbacks = callbacks,
-        batch_size = batch_size,
+        batch_size = FLAGS$batch_size,
         epochs     = 1,
         shuffle    = FALSE)
       
@@ -212,14 +199,15 @@ if (!model_exists) {
 
 model
 
-if (stateful)
+if (FLAGS$stateful)
   model %>% reset_states()
 
+plot(history, metrics = "loss")
 
 # Train predictions -------------------------------------------------------
 
 pred_train <- model %>%
-  predict(X_train, batch_size = batch_size) %>%
+  predict(X_train, batch_size = FLAGS$batch_size) %>%
   .[, , 1]
 
 # Retransform values
@@ -231,14 +219,14 @@ for (i in 1:nrow(pred_train)) {
   varname <- paste0("pred_train", i)
   compare_train <-
     mutate(compare_train,!!varname := c(
-      rep(NA, n_timesteps + i - 1),
+      rep(NA, FLAGS$n_timesteps + i - 1),
       pred_train[i,],
-      rep(NA, nrow(compare_train) - n_timesteps * 2 - i + 1)
+      rep(NA, nrow(compare_train) - FLAGS$n_timesteps * 2 - i + 1)
     ))
 }
 
 compare_train %>% write_csv(str_replace(model_path, ".hdf5", ".train.csv"))
-compare_train[n_timesteps:(n_timesteps + 10), c(2, 4:8)] %>% print()
+compare_train[FLAGS$n_timesteps:(FLAGS$n_timesteps + 10), c(2, 4:8)] %>% print()
 
 coln <- colnames(compare_train)[4:ncol(compare_train)]
 cols <- map(coln, quo(sym(.)))
@@ -256,16 +244,23 @@ print(rsme_train)
 ggplot(compare_train, aes(x = index, y = value)) + geom_line() +
   geom_line(aes(y = pred_train1), color = "cyan") +
   geom_line(aes(y = pred_train100), color = "red") +
-  geom_line(aes(y = pred_train300), color = "green") +
-  geom_line(aes(y = pred_train500), color = "violet") +
-  geom_line(aes(y = pred_train700), color = "cyan") +
-  geom_line(aes(y = pred_train900), color = "red")
+  geom_line(aes(y = pred_train200), color = "green") +
+  geom_line(aes(y = pred_train300), color = "violet") +
+  geom_line(aes(y = pred_train400), color = "cyan") +
+  geom_line(aes(y = pred_train500), color = "red") +
+  geom_line(aes(y = pred_train600), color = "red") +
+  geom_line(aes(y = pred_train700), color = "green") +
+  geom_line(aes(y = pred_train800), color = "violet") +
+  geom_line(aes(y = pred_train900), color = "cyan") +
+  geom_line(aes(y = pred_train1000), color = "red") +
+  geom_line(aes(y = pred_train1100), color = "green") 
+
 
 
 # Test predictions--------------------------------------------------------------------
 
 pred_test <- model %>%
-  predict(X_test, batch_size = batch_size) %>%
+  predict(X_test, batch_size = FLAGS$batch_size) %>%
   .[, , 1]
 
 # Retransform values
@@ -277,14 +272,14 @@ for (i in 1:nrow(pred_test)) {
   varname <- paste0("pred_test", i)
   compare_test <-
     mutate(compare_test,!!varname := c(
-      rep(NA, n_timesteps + i - 1),
+      rep(NA, FLAGS$n_timesteps + i - 1),
       pred_test[i,],
-      rep(NA, nrow(compare_test) - n_timesteps * 2 - i + 1)
+      rep(NA, nrow(compare_test) - FLAGS$n_timesteps * 2 - i + 1)
     ))
 }
 
 compare_test %>% write_csv(str_replace(model_path, ".hdf5", ".test.csv"))
-compare_test[n_timesteps:(n_timesteps + 10), c(2, 4:8)] %>% print()
+compare_test[FLAGS$n_timesteps:(FLAGS$n_timesteps + 10), c(2, 4:8)] %>% print()
 
 coln <- colnames(compare_test)[4:ncol(compare_test)]
 cols <- map(coln, quo(sym(.)))
@@ -301,7 +296,15 @@ print(rsme_test)
 
 ggplot(compare_test, aes(x = index, y = value)) + geom_line() +
   geom_line(aes(y = pred_test1), color = "cyan") +
-  geom_line(aes(y = pred_test100), color = "red") +
-  geom_line(aes(y = pred_test200), color = "green") +
-  geom_line(aes(y = pred_test300), color = "violet")
+  geom_line(aes(y = pred_test50), color = "red") +
+  geom_line(aes(y = pred_test100), color = "green") +
+  geom_line(aes(y = pred_test150), color = "violet") +
+  geom_line(aes(y = pred_test200), color = "cyan") +
+  geom_line(aes(y = pred_test250), color = "red") +
+  geom_line(aes(y = pred_test300), color = "green") +
+  geom_line(aes(y = pred_test350), color = "cyan") +
+  geom_line(aes(y = pred_test400), color = "red") +
+  geom_line(aes(y = pred_test450), color = "green") +  
+  geom_line(aes(y = pred_test500), color = "cyan") +
+  geom_line(aes(y = pred_test550), color = "violet")
 
