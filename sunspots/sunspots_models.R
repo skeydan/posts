@@ -7,7 +7,7 @@ sun_spots <- datasets::sunspot.month %>%
 
 periods_train <- 12 * 100
 periods_test  <- 12 * 50
-skip_span     <- 12 * 20
+skip_span     <- (12 * 22) - 1
 
 rolling_origin_resamples <- rolling_origin(
   sun_spots,
@@ -17,13 +17,16 @@ rolling_origin_resamples <- rolling_origin(
   skip       = skip_span
 )
 
-split    <- rolling_origin_resamples$splits[[6]]
-split_id <- rolling_origin_resamples$id[[6]]
-df_trn <- training(split)
-df_tst <- testing(split)
+example_split    <- rolling_origin_resamples$splits[[6]]
+example_split_id <- rolling_origin_resamples$id[[6]]
+
+df_trn <- analysis(example_split)[1:800, , drop = FALSE]
+df_val <- analysis(example_split)[801:1200, , drop = FALSE]
+df_tst <- assessment(example_split)
 
 df <- bind_rows(
   df_trn %>% add_column(key = "training"),
+  df_val %>% add_column(key = "validation"),
   df_tst %>% add_column(key = "testing")
 ) %>%
   as_tbl_time(index = index)
@@ -58,7 +61,7 @@ FLAGS <- flags(
   flag_integer("n_units", 128),
   flag_numeric("lr", 0.003),
   flag_numeric("momentum", 0.9),
-  flag_integer("patience", 20)
+  flag_integer("patience", 10)
 )
 
 n_predictions <- FLAGS$n_timesteps
@@ -111,6 +114,10 @@ train_vals <- df_processed_tbl %>%
   filter(key == "training") %>%
   select(value) %>%
   pull()
+valid_vals <- df_processed_tbl %>%
+  filter(key == "validation") %>%
+  select(value) %>%
+  pull()
 test_vals <- df_processed_tbl %>%
   filter(key == "testing") %>%
   select(value) %>%
@@ -118,6 +125,8 @@ test_vals <- df_processed_tbl %>%
 
 train_matrix <-
   build_matrix(train_vals, FLAGS$n_timesteps + n_predictions)
+valid_matrix <-
+  build_matrix(valid_vals, FLAGS$n_timesteps + n_predictions)
 test_matrix <- build_matrix(test_vals, FLAGS$n_timesteps + n_predictions)
 
 X_train <- train_matrix[, 1:FLAGS$n_timesteps]
@@ -125,15 +134,22 @@ y_train <- train_matrix[, (FLAGS$n_timesteps + 1):(FLAGS$n_timesteps * 2)]
 X_train <- X_train[1:(nrow(X_train) %/% FLAGS$batch_size * FLAGS$batch_size), ]
 y_train <- y_train[1:(nrow(y_train) %/% FLAGS$batch_size * FLAGS$batch_size), ]
 
+X_valid <- valid_matrix[, 1:FLAGS$n_timesteps]
+y_valid <- valid_matrix[, (FLAGS$n_timesteps + 1):(FLAGS$n_timesteps * 2)]
+X_valid <- X_valid[1:(nrow(X_valid) %/% FLAGS$batch_size * FLAGS$batch_size), ]
+y_valid <- y_valid[1:(nrow(y_valid) %/% FLAGS$batch_size * FLAGS$batch_size), ]
+
 X_test <- test_matrix[, 1:FLAGS$n_timesteps]
 y_test <- test_matrix[, (FLAGS$n_timesteps + 1):(FLAGS$n_timesteps * 2)]
 X_test <- X_test[1:(nrow(X_test) %/% FLAGS$batch_size * FLAGS$batch_size), ]
 y_test <- y_test[1:(nrow(y_test) %/% FLAGS$batch_size * FLAGS$batch_size), ]
 
 X_train <- reshape_X_3d(X_train)
+X_valid <- reshape_X_3d(X_valid)
 X_test <- reshape_X_3d(X_test)
 
 y_train <- reshape_X_3d(y_train)
+y_valid <- reshape_X_3d(y_valid)
 y_test <- reshape_X_3d(y_test)
 
 
@@ -169,7 +185,7 @@ if (!model_exists) {
     history <- model %>% fit(
       x          = X_train,
       y          = y_train,
-      validation_data = list(X_test, y_test),
+      validation_data = list(X_valid, y_valid),
       batch_size = FLAGS$batch_size,
       epochs     = FLAGS$n_epochs,
       callbacks = callbacks
@@ -180,7 +196,7 @@ if (!model_exists) {
       history <- model %>% fit(
         x          = X_train,
         y          = y_train,
-        validation_data = list(X_test, y_test),
+        validation_data = list(X_valid, y_valid),
         callbacks = callbacks,
         batch_size = FLAGS$batch_size,
         epochs     = 1,
@@ -243,17 +259,23 @@ print(rsme_train)
 
 ggplot(compare_train, aes(x = index, y = value)) + geom_line() +
   geom_line(aes(y = pred_train1), color = "cyan") +
-  geom_line(aes(y = pred_train100), color = "red") +
-  geom_line(aes(y = pred_train200), color = "green") +
-  geom_line(aes(y = pred_train300), color = "violet") +
+  geom_line(aes(y = pred_train50), color = "red") +
+  geom_line(aes(y = pred_train100), color = "green") +
+  geom_line(aes(y = pred_train150), color = "violet") +
+  geom_line(aes(y = pred_train200), color = "cyan") +
+  geom_line(aes(y = pred_train250), color = "red") +
+  geom_line(aes(y = pred_train300), color = "red") +
+  geom_line(aes(y = pred_train350), color = "green") +
   geom_line(aes(y = pred_train400), color = "cyan") +
-  geom_line(aes(y = pred_train500), color = "red") +
-  geom_line(aes(y = pred_train600), color = "red") +
-  geom_line(aes(y = pred_train700), color = "green") +
-  geom_line(aes(y = pred_train800), color = "violet") +
-  geom_line(aes(y = pred_train900), color = "cyan") +
-  geom_line(aes(y = pred_train1000), color = "red") +
-  geom_line(aes(y = pred_train1100), color = "green") 
+  geom_line(aes(y = pred_train450), color = "red") +
+  geom_line(aes(y = pred_train500), color = "green") +
+  geom_line(aes(y = pred_train550), color = "violet") +
+  geom_line(aes(y = pred_train600), color = "cyan") +
+  geom_line(aes(y = pred_train650), color = "red") +
+  geom_line(aes(y = pred_train700), color = "red") +
+  geom_line(aes(y = pred_train750), color = "green") +
+  ggtitle("Predictions on training set")
+
 
 
 
@@ -306,5 +328,85 @@ ggplot(compare_test, aes(x = index, y = value)) + geom_line() +
   geom_line(aes(y = pred_test400), color = "red") +
   geom_line(aes(y = pred_test450), color = "green") +  
   geom_line(aes(y = pred_test500), color = "cyan") +
-  geom_line(aes(y = pred_test550), color = "violet")
+  geom_line(aes(y = pred_test550), color = "violet") +
+  ggtitle("Predictions on test set")
+  
+
+##############################################################################
+# overall
+
+all_split_preds <- rolling_origin_resamples %>%
+  mutate(predict = map(splits, obtain_predictions))
+
+saveRDS(all_split_preds, "asp")
+
+all_split_preds <- all_split_preds %>% unnest(predict)
+all_split_preds_train <- all_split_preds[seq(1, 11, by = 2), ]
+all_split_preds_test <- all_split_preds[seq(2, 12, by = 2), ]
+
+all_split_rmses_train <- all_split_preds_train %>%
+  mutate(rmse = map_dbl(predict, calc_rmse)) %>%
+  select(id, rmse)
+
+all_split_rmses_train
+
+all_split_rmses_test <- all_split_preds_test %>%
+  mutate(rmse = map_dbl(predict, calc_rmse)) %>%
+  select(id, rmse)
+
+all_split_rmses_test
+
+plot_train <- function(slice, name) {
+  ggplot(slice, aes(x = index, y = value)) + geom_line() +
+    geom_line(aes(y = pred_train1), color = "cyan") +
+    geom_line(aes(y = pred_train50), color = "red") +
+    geom_line(aes(y = pred_train100), color = "green") +
+    geom_line(aes(y = pred_train150), color = "violet") +
+    geom_line(aes(y = pred_train200), color = "cyan") +
+    geom_line(aes(y = pred_train250), color = "red") +
+    geom_line(aes(y = pred_train300), color = "red") +
+    geom_line(aes(y = pred_train350), color = "green") +
+    geom_line(aes(y = pred_train400), color = "cyan") +
+    geom_line(aes(y = pred_train450), color = "red") +
+    geom_line(aes(y = pred_train500), color = "green") +
+    geom_line(aes(y = pred_train550), color = "violet") +
+    geom_line(aes(y = pred_train600), color = "cyan") +
+    geom_line(aes(y = pred_train650), color = "red") +
+    geom_line(aes(y = pred_train700), color = "red") +
+    geom_line(aes(y = pred_train750), color = "green") +
+    ggtitle(name)
+}
+
+train_plots <- map2(all_split_preds_train$predict, all_split_preds_train$id, plot_train)
+p_body_train  <- plot_grid(plotlist = train_plots, ncol = 3)
+p_title_train <- ggdraw() + 
+  draw_label("Backtested Predictions: Training Sets", size = 18, fontface = "bold")
+
+plot_grid(p_title_train, p_body_train, ncol = 1, rel_heights = c(0.05, 1, 0.05))
+
+
+plot_test <- function(slice, name) {
+  ggplot(slice, aes(x = index, y = value)) + geom_line() +
+    geom_line(aes(y = pred_test1), color = "cyan") +
+    geom_line(aes(y = pred_test50), color = "red") +
+    geom_line(aes(y = pred_test100), color = "green") +
+    geom_line(aes(y = pred_test150), color = "violet") +
+    geom_line(aes(y = pred_test200), color = "cyan") +
+    geom_line(aes(y = pred_test250), color = "red") +
+    geom_line(aes(y = pred_test300), color = "green") +
+    geom_line(aes(y = pred_test350), color = "cyan") +
+    geom_line(aes(y = pred_test400), color = "red") +
+    geom_line(aes(y = pred_test450), color = "green") +  
+    geom_line(aes(y = pred_test500), color = "cyan") +
+    geom_line(aes(y = pred_test550), color = "violet") +
+    ggtitle(name)
+}
+
+test_plots <- map2(all_split_preds_test$predict, all_split_preds_test$id, plot_test)
+
+p_body_test  <- plot_grid(plotlist = test_plots, ncol = 3)
+p_title_test <- ggdraw() + 
+  draw_label("Backtested Predictions: Test Sets", size = 18, fontface = "bold")
+
+plot_grid(p_title_test, p_body_test, ncol = 1, rel_heights = c(0.05, 1, 0.05))
 
