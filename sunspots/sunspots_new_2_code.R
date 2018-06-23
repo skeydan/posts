@@ -201,6 +201,69 @@ scale_history  <- rec_obj$steps[[3]]$sds["value"]
 
 c("center" = center_history, "scale" = scale_history)
 
+#
+n_timesteps <- 12
+n_predictions <- n_timesteps
+batch_size <- 10
+
+# functions used
+build_matrix <- function(tseries, overall_timesteps) {
+  t(sapply(1:(length(tseries) - overall_timesteps + 1), function(x) tseries[x:(x + overall_timesteps - 1)]))
+}
+
+reshape_X_3d <- function(X) {
+  dim(X) <- c(dim(X)[1], dim(X)[2], 1)
+  X
+}
+
+# extract values from data frame
+train_vals <- df_processed_tbl %>%
+  filter(key == "training") %>%
+  select(value) %>%
+  pull()
+valid_vals <- df_processed_tbl %>%
+  filter(key == "validation") %>%
+  select(value) %>%
+  pull()
+test_vals <- df_processed_tbl %>%
+  filter(key == "testing") %>%
+  select(value) %>%
+  pull()
+
+# build the windowed matrices
+train_matrix <-
+  build_matrix(train_vals, n_timesteps + n_predictions)
+valid_matrix <-
+  build_matrix(valid_vals, n_timesteps + n_predictions)
+test_matrix <- build_matrix(test_vals, n_timesteps + n_predictions)
+
+# separate matrices into training and testing parts
+# also, discard last batch if there are fewer than batch_size samples (a purely technical requirement)
+X_train <- train_matrix[, 1:n_timesteps]
+y_train <- train_matrix[, (n_timesteps + 1):(n_timesteps * 2)]
+X_train <- X_train[1:(nrow(X_train) %/% batch_size * batch_size), ]
+y_train <- y_train[1:(nrow(y_train) %/% batch_size * batch_size), ]
+
+X_valid <- valid_matrix[, 1:n_timesteps]
+y_valid <- valid_matrix[, (n_timesteps + 1):(n_timesteps * 2)]
+X_valid <- X_valid[1:(nrow(X_valid) %/% batch_size * batch_size), ]
+y_valid <- y_valid[1:(nrow(y_valid) %/% batch_size * batch_size), ]
+
+X_test <- test_matrix[, 1:n_timesteps]
+y_test <- test_matrix[, (n_timesteps + 1):(n_timesteps * 2)]
+X_test <- X_test[1:(nrow(X_test) %/% batch_size * batch_size), ]
+y_test <- y_test[1:(nrow(y_test) %/% batch_size * batch_size), ]
+
+# add on the required third axis
+X_train <- reshape_X_3d(X_train)
+X_valid <- reshape_X_3d(X_valid)
+X_test <- reshape_X_3d(X_test)
+
+y_train <- reshape_X_3d(y_train)
+y_valid <- reshape_X_3d(y_valid)
+y_test <- reshape_X_3d(y_test)
+
+
 
 # model  ----------------------------------------------------------
 
@@ -256,64 +319,6 @@ optimizer <- switch(FLAGS$optimizer_type,
 callbacks <- list(
   callback_early_stopping(patience = FLAGS$patience)
 )
-
-
-# functions used
-build_matrix <- function(tseries, overall_timesteps) {
-  t(sapply(1:(length(tseries) - overall_timesteps + 1), function(x) tseries[x:(x + overall_timesteps - 1)]))
-}
-
-reshape_X_3d <- function(X) {
-  dim(X) <- c(dim(X)[1], dim(X)[2], 1)
-  X
-}
-
-# extract values from data frame
-train_vals <- df_processed_tbl %>%
-  filter(key == "training") %>%
-  select(value) %>%
-  pull()
-valid_vals <- df_processed_tbl %>%
-  filter(key == "validation") %>%
-  select(value) %>%
-  pull()
-test_vals <- df_processed_tbl %>%
-  filter(key == "testing") %>%
-  select(value) %>%
-  pull()
-
-# build the windowed matrices
-train_matrix <-
-  build_matrix(train_vals, FLAGS$n_timesteps + n_predictions)
-valid_matrix <-
-  build_matrix(valid_vals, FLAGS$n_timesteps + n_predictions)
-test_matrix <- build_matrix(test_vals, FLAGS$n_timesteps + n_predictions)
-
-# separate matrices into training and testing parts
-# also, discard last batch if there are fewer than batch_size samples (a purely technical requirement)
-X_train <- train_matrix[, 1:FLAGS$n_timesteps]
-y_train <- train_matrix[, (FLAGS$n_timesteps + 1):(FLAGS$n_timesteps * 2)]
-X_train <- X_train[1:(nrow(X_train) %/% FLAGS$batch_size * FLAGS$batch_size), ]
-y_train <- y_train[1:(nrow(y_train) %/% FLAGS$batch_size * FLAGS$batch_size), ]
-
-X_valid <- valid_matrix[, 1:FLAGS$n_timesteps]
-y_valid <- valid_matrix[, (FLAGS$n_timesteps + 1):(FLAGS$n_timesteps * 2)]
-X_valid <- X_valid[1:(nrow(X_valid) %/% FLAGS$batch_size * FLAGS$batch_size), ]
-y_valid <- y_valid[1:(nrow(y_valid) %/% FLAGS$batch_size * FLAGS$batch_size), ]
-
-X_test <- test_matrix[, 1:FLAGS$n_timesteps]
-y_test <- test_matrix[, (FLAGS$n_timesteps + 1):(FLAGS$n_timesteps * 2)]
-X_test <- X_test[1:(nrow(X_test) %/% FLAGS$batch_size * FLAGS$batch_size), ]
-y_test <- y_test[1:(nrow(y_test) %/% FLAGS$batch_size * FLAGS$batch_size), ]
-
-# add on the required third axis
-X_train <- reshape_X_3d(X_train)
-X_valid <- reshape_X_3d(X_valid)
-X_test <- reshape_X_3d(X_test)
-
-y_train <- reshape_X_3d(y_train)
-y_valid <- reshape_X_3d(y_valid)
-y_test <- reshape_X_3d(y_test)
 
 
 

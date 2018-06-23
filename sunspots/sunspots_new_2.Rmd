@@ -19,22 +19,33 @@ knitr::opts_chunk$set(
 ```
 
 
-## Time Series Forecasting and Deep Learning
+## Forecasting sunspots with deep learning
 
-In the area of statistical learning - if you allow us, dear reader, to thus subsume statistics and machine learning into one, evading any fruitless "which is which" discussions - time series forecasting has traditionally been occupying a special position.
+In this post we will examine making time series predictions using the [sunspots](https://stat.ethz.ch/R-manual/R-devel/library/datasets/html/sunspot.month.html) dataset that ships with base R. Sunspots are dark spots on the sun, associated with lower temperature. Here's an image from NASA showing the solar phenomenon.
 
-While machine learning in general turns to Kaggle for competitions, forecasting has its [own tradition of contests](https://robjhyndman.com/hyndsight/forecasting-competitions/), and the field has been shaped by a few highly influential personalities, such as [Rob Hyndman](https://robjhyndman.com/), whose [forecast](https://cran.r-project.org/web/packages/forecast/) package we all love as the Swiss army knife of time series analysis.
+<figure>
+<img src="images/sunspot_nasa.jpg" width="50%" />
+<figcaption>Source: https://www.nasa.gov/content/goddard/largest-sunspot-of-solar-cycle</figcaption>
+</figure>
 
-People and competitions aside, there are technical considerations specific to time series forecasting that don't apply to synchronous predictive analytics. When doing cross validation, we may not randomly split the data into validation and test, as we need to  keep sequential relationships intact. Instead, we need to apply a technique often (esp. in finance) called backtesting where we obtain various continuous stretches of training, validation and test data, making sure that we only ever use past data to make our predictions. Thus, an important part of this post is showing how to accomplish this using the _rsample_ package.
+&nbsp;
 
-Deep learning, as of the day we're writing this, has seen its most impressive successes in the areas of image recognition and generation, comprising tasks such as classification, localization, object detection, and image enhancement. More and more, natural language processing sees its tasks handled by end-to-end neural network models.
+We're using the monthly version of the dataset, `sunspots.month` (there is a yearly version, too).
+It contains 265 years worth of data (from 1749 through 2013) on the number of sunspots per month. 
 
-In business however, much as in finance, univariate and multivariate time series abound.
-These time series do have something in common with both image data and language data: Like language, they form sequences, and like images, they are made up of homogeneous components - at least if we stay with univariate time series, as we are going to do in this post.
+![](images/sunspots_full.png)
+
+
+Forecasting this dataset is challenging because of high short term variability as well as long-term irregularities evident in the cycles. For example, maximum amplitudes reached by the low frequency cycle differ a lot, as does the number of high frequency cycle steps needed to reach that maximum low frequency cycle height.
+
+Our post will focus on two dominant aspects: how to apply deep learning to time series forecasting, and how to properly apply cross validation in this domain. 
+For the latter, we will use the [rsample](https://cran.r-project.org/package=rsample) package that allows to do resampling on time series data.
+As to the former, our goal is not to reach utmost performance but to show the general course of action when using recurrent neural networks to model this kind of data.
+
 
 ## Recurrent neural networks
 
-When our data has a sequential structure, it is Recurrent Neural Networks (RNNs) we use to model it.
+When our data has a sequential structure, it is recurrent neural networks (RNNs) we use to model it.
 
 As of today, among RNNs, the best established architectures are the GRU (Gated Recurrent Unit) and the LSTM (Long Short Term Memory). For today, let's not zoom in on what makes them special, but on what they have in common with the most stripped-down RNN: the basic recurrence structure.
 
@@ -50,24 +61,6 @@ Now if the input we have to consider, at an arbitrary timestep, ranges back inde
 In practice, then, our hidden state will, at every iteration, be carried forward through a fixed number of steps.
 
 We'll come back to that as soon as we've loaded and pre-processed the data.
-
-## Sunspots Data Set
-
-[Sunspots](https://stat.ethz.ch/R-manual/R-devel/library/datasets/html/sunspot.month.html) is a famous data set that ships with R. Sunspots are dark spots on the sun, associated with lower temperature. Here's an image from NASA showing the solar phenomenon.
-
-<figure>
-<img src="images/sunspot_nasa.jpg" width="50%" />
-<figcaption>Source: https://www.nasa.gov/content/goddard/largest-sunspot-of-solar-cycle</figcaption>
-</figure>
-
-&nbsp;
-
-Here, we use the monthly version of the dataset, `sunspots.month` (there is a yearly version, too).
-It contains 265 years worth of data (from 1749 through 2013) on the number of sunspots per month. 
-
-![](images/sunspots_full.png)
-
-
 
 
 ## Setup, pre-processing, and exploration
@@ -113,7 +106,7 @@ install_keras()
 
 ### Data 
 
-The dataset, `sunspot.month`, ships with base R. It's a `ts` class (not tidy), so we'll convert to a tidy data set using the `tk_tbl()` function from `timetk`. We use this instead of `as.tibble()` from `tibble` to automatically preserve the time series index as a `zoo` `yearmon` index. Last, we'll convert the `zoo` index to date using `lubridate::as_date()` (loaded with `tidyquant`) and then change to a `tbl_time` object to make time series operations easier.
+`sunspot.month` is a `ts` class (not tidy), so we'll convert to a tidy data set using the `tk_tbl()` function from `timetk`. We use this instead of `as.tibble()` from `tibble` to automatically preserve the time series index as a `zoo` `yearmon` index. Last, we'll convert the `zoo` index to date using `lubridate::as_date()` (loaded with `tidyquant`) and then change to a `tbl_time` object to make time series operations easier.
 
 ```{r}
 sun_spots <- datasets::sunspot.month %>%
@@ -143,11 +136,11 @@ sun_spots
 ```
 
 
-### Exploratory Data Analysis
+### Exploratory data analysis
 
 The time series is long (265 years!). We can visualize the time series both in full, and zoomed in on the first 10 years to get a feel for the series. 
 
-#### Visualizing Sunspot Data with cowplot
+#### Visualizing sunspot data with cowplot
 
 We'll make two `ggplot`s and combine them using `cowplot::plot_grid()`. Note that for the zoomed in plot, we make use of `tibbletime::time_filter()`, which is an easy way to perform time-based filtering. 
 
@@ -182,13 +175,13 @@ plot_grid(p_title, p1, p2, ncol = 1, rel_heights = c(0.1, 1, 1))
 ![](images/cowplot.png)
 
 
-### Backtesting: Time Series Cross Validation
+### Backtesting: time series cross validation
 
-As hinted at in the introduction, when doing cross validation on sequential data, the time dependencies on preceding samples must be preserved. We can create a cross validation sampling plan by offsetting the window used to select sequential sub-samples. In essence, we're creatively dealing with the fact that there's no future test data available by creating multiple synthetic "futures".
+When doing cross validation on sequential data, the time dependencies on preceding samples must be preserved. We can create a cross validation sampling plan by offsetting the window used to select sequential sub-samples. In essence, we're creatively dealing with the fact that there's no future test data available by creating multiple synthetic "futures" -  a process often, esp. in finance, called "backtesting".
 
-A recent development which makes cross validation sampling plans very easy to implement is [the `rsample` package](https://topepo.github.io/rsample/). This includes backtesting on time series. The vignette, ["Time Series Analysis Example"](https://topepo.github.io/rsample/articles/Applications/Time_Series.html), describes a procedure that uses the `rolling_origin()` function to create samples designed for time series cross validation. We'll use this approach.
+As mentioned in the introduction, the [rsample](https://cran.r-project.org/package=rsample) package includes facitlities for backtesting on time series. The vignette, ["Time Series Analysis Example"](https://topepo.github.io/rsample/articles/Applications/Time_Series.html), describes a procedure that uses the `rolling_origin()` function to create samples designed for time series cross validation. We'll use this approach.
 
-#### Developing a Backtesting Strategy
+#### Developing a backtesting strategy
 
 The sampling plan we create uses 50 years (`initial` = 12 x 50 samples) for the training set and ten years (`assess` = 12 x 10) for the testing (validation) set. We select a `skip` span of about twenty years (`skip` = 12 x 20 - 1) to approximately evenly distribute the samples into 6 sets that span the entire 265 years of sunspots history. Last, we select `cumulative = FALSE` to allow the origin to shift which ensures that models on more recent data are not given an unfair advantage (more observations) over those operating on less recent data. The tibble return contains the `rolling_origin_resamples`.
 
@@ -221,7 +214,7 @@ rolling_origin_resamples
 6 <S3: rsplit> Slice6
 ```
 
-#### Visualizing the Backtesting Strategy
+#### Visualizing the backtesting strategy
 
 We can visualize the resamples with two custom functions. The first, `plot_split()`, plots one of the resampling splits using `ggplot2`. Note that an `expand_y_axis` argument is added to expand the date range to the full `sun_spots` dataset date range. This will become useful when we visualize all plots together. 
 
@@ -363,7 +356,7 @@ plot_split(example_split, expand_y_axis = FALSE, size = 0.5) +
 
 ![](images/slice6.png)
 
-### Data Setup
+### Data setup
 
 To aid hyperparameter tuning, besides the training set we also need a validation set.
 For example, we will use a callback, `callback_early_stopping`, that stops training when no significant performance is seen on the validation set (what's considered significant is up to you).
@@ -492,9 +485,15 @@ And our target data, correspondingly:
 
 We'll define a short function that does this reshaping on a given dataset.
 Then finally, we add the third axis that is formally needed (even though that axis is of size 1 in our case).
-_Note: When running the code, please execute the subsequent snippet before this one as it introduces a few needed variables (`FLAGS$batch_size`, `FLAGS$n_timesteps` and `n_predictions`). These are basically just the batch size used, the state length and the number of predictions, and are defined below.
+
 
 ```{r}
+# these variables are being defined just because of the order in which we present things in this post (first the data, then the model)
+# they will be superseded by FLAGS$n_timesteps, FLAGS$batch_size and n_predictions in the following snippet
+n_timesteps <- 12
+n_predictions <- n_timesteps
+batch_size <- 10
+
 # functions used
 build_matrix <- function(tseries, overall_timesteps) {
   t(sapply(1:(length(tseries) - overall_timesteps + 1), function(x) tseries[x:(x + overall_timesteps - 1)]))
@@ -519,30 +518,30 @@ test_vals <- df_processed_tbl %>%
   select(value) %>%
   pull()
 
+
 # build the windowed matrices
 train_matrix <-
-  build_matrix(train_vals, FLAGS$n_timesteps + n_predictions)
+  build_matrix(train_vals, n_timesteps + n_predictions)
 valid_matrix <-
-  build_matrix(valid_vals, FLAGS$n_timesteps + n_predictions)
-test_matrix <- build_matrix(test_vals, FLAGS$n_timesteps + n_predictions)
+  build_matrix(valid_vals, n_timesteps + n_predictions)
+test_matrix <- build_matrix(test_vals, n_timesteps + n_predictions)
 
 # separate matrices into training and testing parts
 # also, discard last batch if there are fewer than batch_size samples (a purely technical requirement)
-X_train <- train_matrix[, 1:FLAGS$n_timesteps]
-y_train <- train_matrix[, (FLAGS$n_timesteps + 1):(FLAGS$n_timesteps * 2)]
-X_train <- X_train[1:(nrow(X_train) %/% FLAGS$batch_size * FLAGS$batch_size), ]
-y_train <- y_train[1:(nrow(y_train) %/% FLAGS$batch_size * FLAGS$batch_size), ]
+X_train <- train_matrix[, 1:n_timesteps]
+y_train <- train_matrix[, (n_timesteps + 1):(n_timesteps * 2)]
+X_train <- X_train[1:(nrow(X_train) %/% batch_size * batch_size), ]
+y_train <- y_train[1:(nrow(y_train) %/% batch_size * batch_size), ]
 
-X_valid <- valid_matrix[, 1:FLAGS$n_timesteps]
-y_valid <- valid_matrix[, (FLAGS$n_timesteps + 1):(FLAGS$n_timesteps * 2)]
-X_valid <- X_valid[1:(nrow(X_valid) %/% FLAGS$batch_size * FLAGS$batch_size), ]
-y_valid <- y_valid[1:(nrow(y_valid) %/% FLAGS$batch_size * FLAGS$batch_size), ]
+X_valid <- valid_matrix[, 1:n_timesteps]
+y_valid <- valid_matrix[, (n_timesteps + 1):(n_timesteps * 2)]
+X_valid <- X_valid[1:(nrow(X_valid) %/% batch_size * batch_size), ]
+y_valid <- y_valid[1:(nrow(y_valid) %/% batch_size * batch_size), ]
 
-X_test <- test_matrix[, 1:FLAGS$n_timesteps]
-y_test <- test_matrix[, (FLAGS$n_timesteps + 1):(FLAGS$n_timesteps * 2)]
-X_test <- X_test[1:(nrow(X_test) %/% FLAGS$batch_size * FLAGS$batch_size), ]
-y_test <- y_test[1:(nrow(y_test) %/% FLAGS$batch_size * FLAGS$batch_size), ]
-
+X_test <- test_matrix[, 1:n_timesteps]
+y_test <- test_matrix[, (n_timesteps + 1):(n_timesteps * 2)]
+X_test <- X_test[1:(nrow(X_test) %/% batch_size * batch_size), ]
+y_test <- y_test[1:(nrow(y_test) %/% batch_size * batch_size), ]
 # add on the required third axis
 X_train <- reshape_X_3d(X_train)
 X_valid <- reshape_X_3d(X_valid)
@@ -554,7 +553,7 @@ y_test <- reshape_X_3d(y_test)
 ```
 
 
-##### 5.1.6 Building the LSTM Model
+##### 5.1.6 Building the LSTM model
 
 Now that we have our data in the required form, let's finally build the model. 
 As always in deep learning, an important, and often time-consuming, part of the job is tuning hyperparameters. To keep this post self-contained, and considering this is primarily a tutorial on how to use LSTM in R, let's assume the following settings were found after extensive experimentation (in reality experimentation _did_ take place, but not to a degree that performance couldn't possibly be improved).
@@ -727,7 +726,7 @@ history <- model %>% fit(
 As we see, training was stopped after ~55 epochs as validation loss did not decrease any more.
 We also see that performance on the validation set is way worse than performance on the training set - normally indicating overfitting.
 
-This topic too, we'll leave to a separate discussion another time, but interestingly regularization using different settings of `dropout` and `recurrent_dropout` did not yield better generalization performance. This is probably related to characteristics of this special time series which we'll shortly comment on below.
+This topic too, we'll leave to a separate discussion another time, but interestingly regularization using higher values of `dropout` and `recurrent_dropout` (combined with increasing model capacity) did not yield better generalization performance. This is probably related to the characteristics of this specific time series we mentioned in the introduction.
 
 ```{r}
 plot(history, metrics = "loss")
@@ -876,11 +875,9 @@ ggplot(compare_test, aes(x = index, y = value)) + geom_line() +
 ![](images/pred_test.png)
 
 
-That's not as good as on the training set, but not bad either! This time series is all but regular.
-On the one hand, short term variability (over months) is really high. On the other, there seem to be important changes in amplitude in the long run. Those are necessarily hard to anticipate for any forecasting algorithm.
+That's not as good as on the training set, but not bad either, given this time series is quite challenging.
 
-At this point, it would be easy to digress into a discussion of what are especially appropriate data to predict with LSTM, including comparison with traditional methods used in forecasting. We'll leave that to another post and instead, revert to our overall re-sampling setup for validation. 
-
+Having defined and run our model on a manually chosen example split, let's now revert to our overall re-sampling frame.
 
 
 ### Backtesting the model on all splits
@@ -1204,8 +1201,7 @@ plot_grid(p_title_test, p_body_test, ncol = 1, rel_heights = c(0.05, 1, 0.05))
 
 
 
-This has been a long post, and necessarily will have left a lot of questions open.
-
-Stay tuned for upcoming posts more narrowly focused on specifics of tuning deep learning models, as well as - of course - further case studies exploring applications of deep learning to a wide range of real-world tasks!
-
+This has been a long post, and necessarily will have left a lot of questions open, first and foremost: How do we obtain good settings for the hyperparameters (learning rate, number of epochs, dropout)?
+How do we choose the length of the hidden state? Or even, can we have an intuition how well LSTM will perform on a given dataset (with its specific characteristics)?
+We will tackle questions like the above in upcoming posts.
 
