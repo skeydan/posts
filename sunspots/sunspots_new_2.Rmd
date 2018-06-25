@@ -488,15 +488,18 @@ Then finally, we add the third axis that is formally needed (even though that ax
 
 
 ```{r}
-# these variables are being defined just because of the order in which we present things in this post (first the data, then the model)
-# they will be superseded by FLAGS$n_timesteps, FLAGS$batch_size and n_predictions in the following snippet
+# these variables are being defined just because of the order in which
+# we present things in this post (first the data, then the model)
+# they will be superseded by FLAGS$n_timesteps, FLAGS$batch_size and n_predictions
+# in the following snippet
 n_timesteps <- 12
 n_predictions <- n_timesteps
 batch_size <- 10
 
 # functions used
 build_matrix <- function(tseries, overall_timesteps) {
-  t(sapply(1:(length(tseries) - overall_timesteps + 1), function(x) tseries[x:(x + overall_timesteps - 1)]))
+  t(sapply(1:(length(tseries) - overall_timesteps + 1), function(x) 
+    tseries[x:(x + overall_timesteps - 1)]))
 }
 
 reshape_X_3d <- function(X) {
@@ -527,7 +530,8 @@ valid_matrix <-
 test_matrix <- build_matrix(test_vals, n_timesteps + n_predictions)
 
 # separate matrices into training and testing parts
-# also, discard last batch if there are fewer than batch_size samples (a purely technical requirement)
+# also, discard last batch if there are fewer than batch_size samples
+# (a purely technical requirement)
 X_train <- train_matrix[, 1:n_timesteps]
 y_train <- train_matrix[, (n_timesteps + 1):(n_timesteps * 2)]
 X_train <- X_train[1:(nrow(X_train) %/% batch_size * batch_size), ]
@@ -589,7 +593,8 @@ FLAGS <- flags(
   flag_numeric("recurrent_dropout", 0.2),
   # loss function. Found to work better for this specific case than mean squared error
   flag_string("loss", "logcosh"),
-  # optimizer = stochastic gradient descent. Seemed to work better than adam or rmsprop here (as indicated by limited testing)
+  # optimizer = stochastic gradient descent. Seemed to work better than adam or rmsprop here
+  # (as indicated by limited testing)
   flag_string("optimizer_type", "sgd"),
   # size of the LSTM layer
   flag_integer("n_units", 128),
