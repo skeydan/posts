@@ -1,10 +1,11 @@
 ---
 title: 'Deep Learning for Time Series Forecasting: Predicting Sunspot Frequency with Keras'
 author: "Matt Dancho, Sigrid Keydana"
-date: '2018-10-06'
+date: '2018-06-25'
 output: html_document
 slug: sunspots-lstm
-categories: Keras
+categories: 
+  - Keras
 ---
 
 ```{r setup, include=FALSE}
@@ -24,7 +25,7 @@ knitr::opts_chunk$set(
 In this post we will examine making time series predictions using the [sunspots](https://stat.ethz.ch/R-manual/R-devel/library/datasets/html/sunspot.month.html) dataset that ships with base R. Sunspots are dark spots on the sun, associated with lower temperature. Here's an image from NASA showing the solar phenomenon.
 
 <figure>
-<img src="images/sunspot_nasa.jpg" width="50%" />
+<img src="/blog/images/sunspots/sunspot_nasa.jpg" width="50%" />
 <figcaption>Source: https://www.nasa.gov/content/goddard/largest-sunspot-of-solar-cycle</figcaption>
 </figure>
 
@@ -33,7 +34,7 @@ In this post we will examine making time series predictions using the [sunspots]
 We're using the monthly version of the dataset, `sunspots.month` (there is a yearly version, too).
 It contains 265 years worth of data (from 1749 through 2013) on the number of sunspots per month. 
 
-![](images/sunspots_full.png)
+![](/blog/images/sunspots/sunspots_full.png)
 
 
 Forecasting this dataset is challenging because of high short term variability as well as long-term irregularities evident in the cycles. For example, maximum amplitudes reached by the low frequency cycle differ a lot, as does the number of high frequency cycle steps needed to reach that maximum low frequency cycle height.
@@ -51,7 +52,7 @@ As of today, among RNNs, the best established architectures are the GRU (Gated R
 
 In contrast to the prototype of a neural network, often called Multilayer Perceptron (MLP), the RNN has a state that is carried on over time. This is nicely seen in this diagram from [Goodfellow et al.](http://www.deeplearningbook.org), a.k.a. the "bible of deep learning":
 
-![Source: http://www.deeplearningbook.org](images/rnn.png)
+![Source: http://www.deeplearningbook.org](/blog/images/sunspots/rnn.png)
 
 
 At each time, the state is a combination of the current input and the previous hidden state. This is reminiscent of autoregressive models, but with neural networks, there has to be some point where we halt the dependence.
@@ -172,7 +173,7 @@ plot_grid(p_title, p1, p2, ncol = 1, rel_heights = c(0.1, 1, 1))
 ```
 
 
-![](images/cowplot.png)
+![](/blog/images/sunspots/cowplot.png)
 
 
 ### Backtesting: time series cross validation
@@ -278,7 +279,7 @@ rolling_origin_resamples$splits[[1]] %>%
     theme(legend.position = "bottom")
 ```
 
-![](images/slice1.png)
+![](/blog/images/sunspots/slice1.png)
 
 
 The second function, `plot_sampling_plan()`, scales the `plot_split()` function to all of the samples using `purrr` and `cowplot`.
@@ -322,7 +323,7 @@ rolling_origin_resamples %>%
                        title = "Backtesting Strategy: Rolling Origin Sampling Plan")
 ```
 
-![](images/all_splits.png)
+![](/blog/images/sunspots/all_splits.png)
 
 And, we can set `expand_y_axis = FALSE` to zoom in on the samples. 
 
@@ -332,7 +333,7 @@ rolling_origin_resamples %>%
                        title = "Backtesting Strategy: Zoomed In")
 ```
 
-![](images/all_splits_zoomed.png)
+![](/blog/images/sunspots/all_splits_zoomed.png)
 
 We'll use this backtesting strategy (6 samples from one time series each with 50/10 split in years and a ~20 year offset) when testing the veracity of the LSTM model on the sunspots dataset. 
 
@@ -354,7 +355,7 @@ plot_split(example_split, expand_y_axis = FALSE, size = 0.5) +
     ggtitle(glue("Split: {example_split_id}"))
 ```
 
-![](images/slice6.png)
+![](/blog/images/sunspots/slice6.png)
 
 ### Data setup
 
@@ -638,7 +639,8 @@ model %>%
     batch_input_shape  = c(FLAGS$batch_size, FLAGS$n_timesteps, n_features),
     dropout = FLAGS$dropout,
     recurrent_dropout = FLAGS$recurrent_dropout,
-    return_sequences = TRUE
+    return_sequences = TRUE,
+    stateful = FLAGS$stateful
   )
 
 if (FLAGS$stack_layers) {
@@ -647,7 +649,8 @@ if (FLAGS$stack_layers) {
       units            = FLAGS$n_units,
       dropout = FLAGS$dropout,
       recurrent_dropout = FLAGS$recurrent_dropout,
-      return_sequences = TRUE
+      return_sequences = TRUE,
+      stateful = FLAGS$stateful
     )
 }
 model %>% time_distributed(layer_dense(units = 1))
@@ -670,7 +673,7 @@ if (!FLAGS$stateful) {
   )
   
 } else {
-  for (i in 1:n_epochs) {
+  for (i in 1:FLAGS$n_epochs) {
     model %>% fit(
       x          = X_train,
       y          = y_train,
@@ -739,7 +742,7 @@ plot(history, metrics = "loss")
 
 
 
-![](images/losscurve.png)
+![](/blog/images/sunspots/history.png)
 
 
 Now let's see how well the model was able to capture the characteristics of the training set.
@@ -812,7 +815,7 @@ ggplot(compare_train, aes(x = index, y = value)) + geom_line() +
 ```
 
 
-![](images/pred_train.png)
+![](/blog/images/sunspots/pred_train.png)
 
 This looks pretty good. From the validation loss, we don't quite expect the same from the test set, though.
 
@@ -877,7 +880,7 @@ ggplot(compare_test, aes(x = index, y = value)) + geom_line() +
   ggtitle("Predictions on test set")
 ```
 
-![](images/pred_test.png)
+![](/blog/images/sunspots/pred_test.png)
 
 
 That's not as good as on the training set, but not bad either, given this time series is quite challenging.
@@ -1170,7 +1173,7 @@ plot_grid(p_title_train, p_body_train, ncol = 1, rel_heights = c(0.05, 1, 0.05))
 ```
 
 
-![](images/backtested_train.png)
+![](/blog/images/sunspots/backtested_train.png)
 
 And the test sets:
 
@@ -1202,7 +1205,7 @@ plot_grid(p_title_test, p_body_test, ncol = 1, rel_heights = c(0.05, 1, 0.05))
 
 ```
 
-![](images/backtested_test.png)
+![](/blog/images/sunspots/backtested_test.png)
 
 
 

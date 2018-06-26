@@ -330,7 +330,8 @@ model %>%
     batch_input_shape  = c(FLAGS$batch_size, FLAGS$n_timesteps, n_features),
     dropout = FLAGS$dropout,
     recurrent_dropout = FLAGS$recurrent_dropout,
-    return_sequences = TRUE
+    return_sequences = TRUE,
+    stateful = FLAGS$stateful
   )
 
 if (FLAGS$stack_layers) {
@@ -339,7 +340,8 @@ if (FLAGS$stack_layers) {
       units            = FLAGS$n_units,
       dropout = FLAGS$dropout,
       recurrent_dropout = FLAGS$recurrent_dropout,
-      return_sequences = TRUE
+      return_sequences = TRUE,
+      stateful = FLAGS$stateful
     )
 }
 model %>% time_distributed(layer_dense(units = 1))
@@ -362,7 +364,7 @@ if (!FLAGS$stateful) {
   )
   
 } else {
-  for (i in 1:n_epochs) {
+  for (i in 1:FLAGS$n_epochs) {
     model %>% fit(
       x          = X_train,
       y          = y_train,
