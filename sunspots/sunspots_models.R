@@ -174,7 +174,8 @@ if (!model_exists) {
         return_sequences = TRUE
       )
   }
-  model %>% time_distributed(layer_dense(units = 1))
+  model %>% layer_dense(units = 1)
+  # model %>% time_distributed(layer_dense(units = 1))
   
   model %>%
     compile(loss = FLAGS$loss, optimizer = optimizer, metrics = list("mean_squared_error"))

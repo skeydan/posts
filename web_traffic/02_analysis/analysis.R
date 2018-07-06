@@ -5,10 +5,10 @@ library(tidyquant)
 library(padr)
 library(tibbletime)
 
-source("web_traffic/01_scripts/data_processing.R")
+source("01_scripts/data_processing.R")
 
 # Collect Data
-train_2_raw <- read_csv("web_traffic/00_data/train_2_raw_100.csv")
+train_2_raw <- read_csv("00_data/train_2_raw_100.csv")
 
 train_2_raw %>%
     select(1:7, ncol(.))

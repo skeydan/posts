@@ -1,0 +1,139 @@
+---
+title: "Outline"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+## General
+
+My current view on this... I suggest we try to have 1, not too long, post directly focused on the question at hand. I'd try to keep it decidedly shorter than the sunspots post and just concentrate on packages/tools we really need for this (e.g., the resampling in sunspots is awesome but I think it just gets too long if we do it here, too)
+
+We could always have successor posts about things we found especially interesting - e.g., does more feature engineering help, differences between countries ... 
+
+
+
+
+## Data preparation 
+
+- how to handle this:
+
+```
+Unfortunately, the data source for this dataset does not distinguish between traffic values of zero and missing values.
+A missing value may mean the traffic was zero or that the data is not available for that day.
+```
+
+
+As anyway we were going to concentrate on a subset of pages, how about we choose ones that have at least 1 view per day?
+
+
+- extract categorical variables: country, type, agent 
+
+```
+The page names contain the Wikipedia project (e.g. en.wikipedia.org), 
+type of access (e.g. desktop) and type of agent (e.g. spider). 
+In other words, each article name has the following format: 
+'name_project_access_agent' (e.g. 'AKB48_zh.wikipedia.org_all-access_spider').
+```
+
+- from winner
+
+```
+All features (including one-hot encoded) are normalized to zero mean and unit variance. 
+Each pageviews series normalized independently.
+
+Time-independent features (autocorrelations, country, etc) are "stretched" 
+to timeseries length i.e. repeated for each day by tf.tile() command.
+```
+
+
+## Exploration
+
+Interesting stuff in: https://www.kaggle.com/muonneutrino/wikipedia-traffic-data-exploration
+
+
+
+
+## Feature engineering
+
+
+
+- features from winning solution: we could either keep these or be even more simplistic
+- we could also frame this as a model comparison:
+
+    - just 1, 2 and 3, extended by features similar to (3): year, month, day of year, month of year, quarter of year... (model 1)
+    
+    
+    - 1,2,3 as above, extended by (5) (model 2)
+    
+    - 1,2,3 as above, (5), (6) (model 3)
+    
+
+```
+pageviews: Raw values transformed by log1p() to get more-or-less normal intra-series values    distribution, instead of skewed one.
+
+agent, country, site - these features are extracted from page urls and one-hot encoded
+
+day of week - to capture weekly seasonality
+
+year-to-year autocorrelation, quarter-to-quarter autocorrelation - to capture yearly and quarterly seasonality strength.
+
+page popularity - High traffic and low traffic pages have different traffic change patterns, this feature (median of pageviews) helps to capture traffic scale. This scale information is lost in a pageviews feature, because each pageviews series independently normalized to zero mean and unit variance.
+
+lagged pageviews - I'll describe this feature later
+```
+
+## Modeling
+
+
+- from winner's solution:
+
+```
+Unsatisfied by complexity of attention mechanics, I tried to remove attention
+completely and just take important (year, halfyear, quarter ago) datapoints
+from the past and use them as an additional features for encoder and decoder.
+That worked surprisingly well, even slightly surpassing attention in prediction
+quality. 
+My best public score was achieved using only lagged datapoints, without attention.
+```
+
+I suggest exactly doing what he does - this will save us a lot of time fiddling around!
+In my suggestion above, this would enter into just (6)
+
+- all 3 models should be seq2seq just as in winner's solution
+
+- Loss function:
+
+```
+I used smoothed differentiable SMAPE variant, which is well-behaved at all real numbers:
+
+epsilon = 0.1
+summ = tf.maximum(tf.abs(true) + tf.abs(predicted) + epsilon, 0.5 + epsilon)
+smape = tf.abs(predicted - true) / summ * 2.0
+```
+
+- optimizer I will experiment myself
+
+- train-val-test split
+
+```
+Side-by-side split is more economical, as it don't consumes datapoints at the end.
+That was a good news. Now the bad news: for our data, model performance
+on validation dataset is strongly correlated to performance on training
+dataset, and almost uncorrelated to the actual model performance in a future. 
+In other words, side-by-side split is useless for our problem, 
+it just duplicates model loss observed on training data.
+```
+
+I think we could just abstract from the actual circumstances at that competition and do the usual 3 way split of the data you downloaded - what do you think?
+If really they chose the test set so weirdly I think that is just doing to complicate things...
+
+- "Reducing model variance" in winner's solution
+
+I will see when I'm working on it... hope I can get around some other way ;-)
+
+
+

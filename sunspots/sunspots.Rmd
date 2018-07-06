@@ -283,13 +283,13 @@ optimal_lag_setting
 ```
 
 
-### 4.0 Backtesting: Time Series Cross Validation
+### Backtesting: Time Series Cross Validation
 
 __Cross validation__ is the process of developing models on sub-sampled data against a validation set with the goal of determining an expected accuracy level and error range. __Time series is a bit different than non-sequential data when it comes to cross validation__. Specifically, the time dependency on previous time samples must be preserved when developing a sampling plan. We can create a cross validation sampling plan using by offseting the window used to select sequential sub-samples. __In finance, this type of analysis is often called "Backtesting", which takes a time series and splits it into multiple uninterupted sequences offset at various windows that can be tested for strategies on both current and past observations.__ 
 
 A recent development is [the `rsample` package](https://topepo.github.io/rsample/), which makes cross validation sampling plans very easy to implement. Further, the `rsample` package has __Backtesting__ covered. The vignette, ["Time Series Analysis Example"](https://topepo.github.io/rsample/articles/Applications/Time_Series.html), describes a procedure that uses the `rolling_origin()` function to create samples designed for __time series cross validation__. We'll use this approach.
 
-#### 4.1 Developing A Backtesting Strategy
+#### Developing a Backtesting Strategy
 
 The sampling plan we create uses 50 years (`initial` = 12 x 50 samples) for the training set and ten years (`assess` = 12 x 10) for the testing (validation) set. We select a `skip` span of twenty years (`skip` = 12 x 20) to evenly distribute the samples into 11 sets that span the entire 265 years of sunspots history. Last, we select `cumulative = FALSE` to allow the origin to shift which ensures that models on more recent data are not given an unfair advantage (more observations) that those on less recent data. The tibble return contains the `rolling_origin_resamples`.
 
@@ -309,7 +309,7 @@ rolling_origin_resamples <- rolling_origin(
 rolling_origin_resamples
 ```
 
-#### 4.2 Visualizing The Backtesting Strategy
+#### Visualizing the Backtesting Strategy
 
 We can visualize the resamples with two custom functions. The first, `plot_split()`, plots one of the resampling splits using `ggplot2`. Note that an `expand_y_axis` argument is added to expand the date range to the full `sun_spots` dataset date range. This will become useful when we visualize all plots together. 
 
@@ -365,7 +365,7 @@ plot_split <- function(split, expand_y_axis = TRUE, alpha = 1, size = 1, base_si
 }
 ```
 
-The `plot_split()` function takes one split (in this case Slice01), and retrns a visual of the sampling strategy. We expand the axis to the range for the full dataset using `expand_y_axis = TRUE`. 
+The `plot_split()` function takes one split (in this case Slice01), and returns a visual of the sampling strategy. We expand the axis to the range for the full dataset using `expand_y_axis = TRUE`. 
 
 ```{r, fig.height=3.5}
 rolling_origin_resamples$splits[[1]] %>%
@@ -407,7 +407,7 @@ plot_sampling_plan <- function(sampling_tbl, expand_y_axis = TRUE,
 ```
 
 
-We can now visualize the __ENTIRE BACKTESTING STRATEGY__ with `plot_sampling_plan()`! We can see how the sampling plan shifts the sampling window with each progressive slice of the train/test splits. 
+We can now visualize the entire backtesting strategy with `plot_sampling_plan()`. We can see how the sampling plan shifts the sampling window with each progressive slice of the train/test splits. 
 
 ```{r, fig.height=8}
 rolling_origin_resamples %>%
@@ -423,22 +423,16 @@ rolling_origin_resamples %>%
                        title = "Backtesting Strategy: Zoomed In")
 ```
 
-We'll use this Backtesting Strategy (11 samples from one time series each with 50/10 split in years and a 20 year offset) when testing the veracity of the LSTM model on the sunspots dataset. 
+We'll use this backtesting strategy (11 samples from one time series each with 50/10 split in years and a 20 year offset) when testing the veracity of the LSTM model on the sunspots dataset. 
 
-### 5.0 Modeling The Keras Stateful LSTM Model
+## The LSTM model
 
-To begin, we'll develop a single Keras Stateful LSTM model on a single sample from the Backtesting Strategy. We'll then __scale the model to all samples__ to investigate/validate the modeling performance. 
-
-#### 5.1 Single LSTM <a class="anchor" id="single-lstm"></a>
-
-For the single LSTM model, we'll select and visualize the split for the most recent time sample/slice (Slice11). The 11th split contains the most recent data.
+To begin, we'll develop an LSTM model on a single sample from the backtesting strategy, namely, the most recent slice. We'll then apply the model to all samples to investigate/validate the modeling performance. 
 
 ```{r}
 split    <- rolling_origin_resamples$splits[[11]]
 split_id <- rolling_origin_resamples$id[[11]]
 ```
-
-##### 5.1.1 Visualizing The Split
 
 We can reuse the `plot_split()` function to visualize the split. Set `expand_y_axis = FALSE` to zoom in on the subsample. 
 
@@ -448,9 +442,9 @@ plot_split(split, expand_y_axis = FALSE, size = 0.5) +
     ggtitle(glue("Split: {split_id}"))
 ```
 
-##### 5.1.2 Data Setup
+### Data Setup
 
-First, let's combine the training and testing data sets into a single data set with a column `key` that specifies what set they came from (either "training" or "testing)". Note that the `tbl_time` object will need to have the index respecified during the `bind_rows()` step, but [this issue](https://github.com/tidyverse/dplyr/issues/3259) should be corrected in `dplyr` soon (please upvote it so RStudio focuses on it). 
+First, let's combine the training and testing data sets into a single data set with a column `key` that specifies where they came from (either "training" or "testing)". Note that the `tbl_time` object will need to have the index respecified during the `bind_rows()` step, but [this issue](https://github.com/tidyverse/dplyr/issues/3259) should be corrected in `dplyr` soon. 
 
 ```{r}
 df_trn <- training(split)
@@ -465,9 +459,9 @@ df <- bind_rows(
 df
 ```
 
-##### 5.1.3 Preprocessing With Recipes
+### Preprocessing with Recipes
 
-The LSTM algorithm requires the input data to be centered and scaled. We can preprocess the data using the `recipes` package. We'll use a combination of `step_sqrt` to transform the data and reduce the presence of outliers and `step_center` and `step_scale` to center and scale the data. The data is processed/transformed using the `bake()` function. 
+The LSTM algorithm will usually work better if the input data has been centered and scaled. We can conveniently accomplish this using the `recipes` package. In addition to `step_center` and `step_scale`, we're using `step_sqrt` to reduce variance and remov outliers. The actual transformations are executed when we `bake` the data according to the recipe: 
 
 ```{r}
 rec_obj <- recipe(value ~ ., df) %>%
@@ -481,7 +475,7 @@ df_processed_tbl <- bake(rec_obj, df)
 df_processed_tbl
 ```
 
-Next, let's capture the center/scale history so we can invert the center and scaling after modeling. The square-root transformation can be inverted by squaring the inverted center/scale values. 
+Next, let's capture the original center and scale so we can invert the steps after modeling. The square root step can then simply be undone by squaring the back-transformed data. 
 
 ```{r}
 center_history <- rec_obj$steps[[2]]$means["value"]
@@ -490,7 +484,7 @@ scale_history  <- rec_obj$steps[[3]]$sds["value"]
 c("center" = center_history, "scale" = scale_history)
 ```
 
-##### 5.1.4 LSTM Plan
+### Creating the model
 
 We need a plan for building the LSTM. First, a couple __PRO TIPS__ with LSTM's:
 
